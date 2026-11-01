@@ -1,0 +1,25 @@
+{
+  "name": "noesis-app",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "noesis-deck": "scripts/deck.js",
+    "noesis-sync": "scripts/sync.js"
+  },
+  "scripts": {
+    "start": "node server/main.js",
+    "sync": "node scripts/sync.js",
+    "test": "node --test",
+    "phone:build": "node scripts/phone-build.js",
+    "phone:import": "node scripts/phone-import.js",
+    "phone:edits": "node scripts/phone-edits.js",
+    "deck": "node scripts/deck.js"
+  },
+  "dependencies": {
+    "ts-fsrs": "^5.4.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "highlight.js": "^11.11.1"
+  }
+}

@@ -1,0 +1,6 @@
+.DS_Store
+noesis.config.json
+.claude/*
+!.claude/skills/
+node_modules/
+phone/dist/

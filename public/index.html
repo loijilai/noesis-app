@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>noesis</title>
+<script>
+// Runs before the first paint so a saved dark choice does not flash light; without one, follow the system.
+(() => {
+  let saved = null;
+  try { saved = localStorage.getItem('noesis-theme'); } catch {}
+  const system = matchMedia('(prefers-color-scheme: dark)');
+  const apply = () => { document.documentElement.dataset.noesisTheme = saved ?? (system.matches ? 'dark' : 'light'); };
+  apply();
+  if (!saved) system.addEventListener('change', apply);
+})();
+</script>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main id="app"></main>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
