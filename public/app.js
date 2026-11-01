@@ -732,7 +732,7 @@ function renderGroup(deck, slug) {
       practiceButtons(href, [todo ? [`練習 ${todo} 張`, 'todo/', true] : null, ['練習全部', '', !todo]]),
       h('span', { class: 'spacer' }),
       search,
-      deck.readOnly ? null : menu(kindItems(add), { label: '+ 新增', class: 'soft' })),
+      deck.readOnly && !deck.canAdd ? null : menu(kindItems(add), { label: '+ 新增', class: 'soft' })),
     list,
     empty,
     noMatch,
@@ -816,8 +816,8 @@ function cardMenu(deck, card, { edit, insert, report, done = render }) {
   const others = deck.readOnly ? [] : deck.groups.filter((g) => g.slug !== card.group);
   return menu([
     edit && { label: '編輯', onselect: edit },
-    insert && !deck.readOnly && { label: '在前面新增', items: kindItems((kind) => insert('before', kind)) },
-    insert && !deck.readOnly && { label: '在後面新增', items: kindItems((kind) => insert('after', kind)) },
+    insert && (!deck.readOnly || deck.canAdd) && { label: '在前面新增', items: kindItems((kind) => insert('before', kind)) },
+    insert && (!deck.readOnly || deck.canAdd) && { label: '在後面新增', items: kindItems((kind) => insert('after', kind)) },
     others.length > 0 && {
       label: '移到',
       items: others.map((g) => ({

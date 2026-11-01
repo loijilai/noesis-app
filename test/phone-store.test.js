@@ -152,3 +152,75 @@ test('a push landing between the phone\'s read and its commit is not overwritten
   assert.equal(remote.read('decks/g/aaaaa.md'), undefined);
   assert.deepEqual(remote.log(), ['phone: delete g/aaaaa', 'desktop', 'init']);
 });
+
+const order = (remote) => JSON.parse(remote.read('decks/g/_group.json')).order;
+const DRAFT = '## Question\n\nnew\n\n## Answer\n\nyes\n';
+
+test('a new card goes last by default, with its file and its place in one commit', async () => {
+  const { remote, store } = await setup();
+  const created = await store.createCard('g', DRAFT);
+  assert.match(created.id, /^[a-z0-9]{5}$/);
+  assert.deepEqual(order(remote), ['aaaaa', 'bbbbb', created.id]);
+  assert.match(remote.read(`decks/g/${created.id}.md`), /^---\ncreated: \d{4}-\d\d-\d\dT[\d:.]+Z\n---\n\n## Question\n\nnew\n/);
+  assert.deepEqual(remote.log(), [`phone: add g/${created.id}`, 'init']);
+  assert.equal(created.version, store.blobSha(`decks/g/${created.id}.md`));
+  assert.ok(store.deck().cards.some((c) => c.id === created.id));
+});
+
+test('a new card can go right before or after another', async () => {
+  const { remote, store } = await setup();
+  const before = await store.createCard('g', DRAFT, { before: 'bbbbb' });
+  assert.deepEqual(order(remote), ['aaaaa', before.id, 'bbbbb']);
+  const after = await store.createCard('g', DRAFT, { after: 'aaaaa' });
+  assert.deepEqual(order(remote), ['aaaaa', after.id, before.id, 'bbbbb']);
+});
+
+test('a draft\'s own frontmatter is replaced by the creation time', async () => {
+  const { remote, store } = await setup();
+  const { id } = await store.createCard('g', `---\nschedule: none\ncreated: 1999-01-01T00:00:00Z\n---\n\n${DRAFT}`);
+  const text = remote.read(`decks/g/${id}.md`);
+  assert.doesNotMatch(text, /1999|schedule/);
+});
+
+test('a malformed draft, an unknown group or neighbour changes nothing', async () => {
+  const { remote, store } = await setup();
+  await assert.rejects(store.createCard('g', 'nonsense'), { status: 400 });
+  await assert.rejects(store.createCard('nope', DRAFT), { status: 404 });
+  await assert.rejects(store.createCard('g', DRAFT, { after: 'zzzzz' }), { status: 404 });
+  assert.deepEqual(remote.log(), ['init']);
+});
+
+test('a new id never reuses one taken in another group', async () => {
+  const picks = [2, 2, 2, 2, 2, 3, 3, 3, 3, 3];
+  const remote = fakeGitHub({ ...FILES, 'decks/h/ccccc.md': card('elsewhere') });
+  const store = createStore({ gh: gitHub({ token: 't', repo: 'me/data', fetch: remote.fetch }), branch: 'master', pending: { get: () => [], set() {} }, random: () => picks.shift() });
+  await store.refresh();
+  const { id } = await store.createCard('g', DRAFT);
+  assert.equal(id, 'ddddd');
+});
+
+test('a reorder pushed from the desktop while the phone adds a card is kept', async () => {
+  const { remote } = await setup();
+  const real = remote.fetch;
+  let raced = false;
+  const gh = gitHub({ token: 't', repo: 'me/data', fetch: async (url, init) => {
+    if (init?.method === 'PATCH' && !raced) {
+      raced = true;
+      remote.push({ 'decks/g/_group.json': '{\n  "name": "G",\n  "order": [\n    "bbbbb",\n    "aaaaa"\n  ]\n}\n' });
+    }
+    return real(url, init);
+  } });
+  const store = createStore({ gh, branch: 'master', pending: { get: () => [], set() {} } });
+  await store.refresh();
+  const { id } = await store.createCard('g', DRAFT);
+  assert.deepEqual(order(remote), ['bbbbb', 'aaaaa', id]);
+  assert.deepEqual(remote.log(), [`phone: add g/${id}`, 'desktop', 'init']);
+});
+
+test('a group with no _group.json gets one when a card is added', async () => {
+  const files = { ...FILES };
+  delete files['decks/g/_group.json'];
+  const { remote, store } = await setup(files);
+  const { id } = await store.createCard('g', DRAFT);
+  assert.deepEqual(JSON.parse(remote.read('decks/g/_group.json')), { order: ['aaaaa', 'bbbbb', id] });
+});

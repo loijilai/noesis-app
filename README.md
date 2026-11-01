@@ -63,8 +63,9 @@ npm run sync
 - token 只開資料 repo，Repository permissions 的 Contents 設為 **Read and write**，期限可以選 No expiration。token 只存在手機的瀏覽器裡，不要寫進任何檔案。
 - 打開頁面時比對檔案列表的 `sha`，只下載有變的檔案，下載過的存在手機裡。圖片在顯示時才下載。
 - 評分先存在手機，練習停下來、離開練習頁面或切到背景時，一次 append 到 `progress/phone.jsonl`。寫不出去的會留著，下次再寫。
-- 修改和刪除卡片都帶著手機看到的版本寫入；電腦在這段時間改過同一張卡的話，GitHub 會拒絕，不會蓋掉電腦的版本。刪除時 `.md` 和 `_group.json` 在同一個 commit 裡改。
-- 手機上不能新增、搬移卡片，也不能改 group。
+- 修改和刪除卡片都帶著手機看到的版本寫入；電腦在這段時間改過同一張卡的話，GitHub 會拒絕，不會蓋掉電腦的版本。
+- 可以在既有的 group 裡新增卡片（放在最後，或某張卡的前後）。新增和刪除時，`.md` 和 `_group.json` 在同一個 commit 裡改。
+- 手機上不能搬移、排序卡片，也不能新增或改 group。
 
 `npm run phone:build` 在本機打包同一個頁面到 `phone/dist/index.html`。
 

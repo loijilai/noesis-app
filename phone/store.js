@@ -2,6 +2,7 @@
 import { buildDeck } from '../server/deck-files.js';
 import { parseCard, withSchedule } from '../server/card-text.js';
 import { parseEvents } from '../server/progress-lines.js';
+import { newCardId, newCardText, placeNew } from '../server/new-card.js';
 import { eventKey, mergeEvents } from './events.js';
 
 const DECK = 'decks/';
@@ -24,7 +25,9 @@ const isWanted = (file) => file === `${DECK}_groups.json`
 const isRace = (err) => err?.status === 409 || err?.status === 422;
 
 // `pending` holds ratings not yet on GitHub: { get(), set(list) }, kept by the caller somewhere that survives a reload.
-export function createStore({ gh, branch, pending, cached = (sha, load) => load() }) {
+const randomIndex = (n) => crypto.getRandomValues(new Uint32Array(1))[0] % n;
+
+export function createStore({ gh, branch, pending, cached = (sha, load) => load(), random = randomIndex }) {
   const decoder = new TextDecoder();
   const text = (sha) => cached(sha, async () => decoder.decode(await gh.blob(sha)));
   let state = { commit: null, tree: null, files: new Map(), texts: new Map() };
@@ -130,6 +133,35 @@ export function createStore({ gh, branch, pending, cached = (sha, load) => load(
     return saveCard(group, id, withSchedule(state.texts.get(file), schedule), state.files.get(file));
   }
 
+  // The card and its place in the group order go in one commit. The order is worked out again from the latest push on every try,
+  // so a reorder on the desktop in the meantime is kept rather than refused.
+  async function createCard(group, raw, side = {}) {
+    const content = newCardText(raw);
+    for (let attempt = 0; attempt < RETRIES; attempt++) {
+      await refresh();
+      const current = deck();
+      const shown = current.groups.find((g) => g.slug === group)?.order;
+      if (!shown) throw new StoreError(404, `找不到群組 ${group}`);
+      const place = placeNew(shown, side, group);
+      const id = newCardId(new Set(current.cards.map((c) => c.id)), random);
+      const metaFile = `${DECK}${group}/_group.json`;
+      const meta = state.files.has(metaFile) ? parseMeta(state.texts.get(metaFile)) : {};
+      const changes = [
+        { path: `${DECK}${group}/${id}.md`, text: content },
+        { path: metaFile, text: `${JSON.stringify({ ...meta, order: place(id) }, null, 2)}\n` },
+      ];
+      try {
+        await gh.commit({ branch, parent: state.commit, baseTree: state.tree, changes, message: `phone: add ${group}/${id}` });
+      } catch (err) {
+        if (isRace(err)) continue;
+        throw err;
+      }
+      await refresh();
+      return { id, group, version: state.files.get(`${DECK}${group}/${id}.md`) };
+    }
+    throw new StoreError(409, 'GitHub 上一直有新的改動，新增沒有完成，請再試一次');
+  }
+
   // The card and its place in the group order go in one commit, so `_group.json` never lists a card that is gone.
   async function deleteCard(group, id) {
     const file = cardFile(group, id);
@@ -165,6 +197,7 @@ export function createStore({ gh, branch, pending, cached = (sha, load) => load(
     flush,
     saveCard,
     setSchedule,
+    createCard,
     deleteCard,
     commit: () => state.commit,
     blobSha: (file) => state.files.get(file),

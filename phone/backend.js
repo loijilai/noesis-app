@@ -88,8 +88,8 @@ async function handle(path, method, body) {
     const deck = store.deck();
     const ids = new Set(deck.cards.map((c) => c.id));
     const known = store.events().filter((e) => ids.has(e.id));
-    // The page hides what only the desktop can do; deleting a card is the one structural change the phone makes.
-    if (path === '/api/deck') return json(200, { ...deck, cards: deck.cards.map(withAssetLinks), readOnly: true, canDelete: true });
+    // The page hides what only the desktop can do; adding and deleting cards are the structural changes the phone makes.
+    if (path === '/api/deck') return json(200, { ...deck, cards: deck.cards.map(withAssetLinks), readOnly: true, canAdd: true, canDelete: true });
     if (path === '/api/schedule') return json(200, { cards: cardSchedules(deck, known, now) });
     if (path === '/api/smart-groups') return json(200, { groups: smartGroups(deck, known, now) });
     if (path === '/api/progress') return json(200, { events: known });
@@ -105,8 +105,12 @@ async function handle(path, method, body) {
     flushTimer = setTimeout(flush, FLUSH_AFTER_MS);
     return json(201, event);
   }
+  if (path === '/api/cards' && method === 'POST') {
+    const { group, raw, before, after } = JSON.parse(body ?? '{}');
+    return json(201, await store.createCard(group, raw, { before, after }));
+  }
   const card = path.match(/^\/api\/cards\/([^/]+)\/([^/]+)(\/schedule)?$/);
-  if (!card) return json(403, { error: '手機版只能練習、修改和刪除卡片；新增、搬移和群組請在電腦上做' });
+  if (!card) return json(403, { error: '手機版不能搬移卡片或改群組，請在電腦上做' });
   const [group, id] = [decodeURIComponent(card[1]), decodeURIComponent(card[2])];
   if (card[3] && method === 'PUT') {
     const { schedule } = JSON.parse(body ?? '{}');

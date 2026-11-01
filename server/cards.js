@@ -2,32 +2,25 @@ import { readdir, readFile, writeFile, unlink, stat } from 'node:fs/promises';
 import { randomInt } from 'node:crypto';
 import path from 'node:path';
 import { cardVersion, isGroupSlug, loadDeck } from './deck.js';
-import { isSchedule, parseCard, withSchedule } from './card-text.js';
+import { isSchedule, withSchedule } from './card-text.js';
+import { CardError, newCardId, newCardText, placeNew, requireValid } from './new-card.js';
 import { readMeta, updateGroupMeta } from './group-meta.js';
 
 export const ID = /^[a-z0-9]{5}$/;
-const ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
-export class CardError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
+export { CardError };
 
 // Without `before` or `after` the card shows last in its group.
 export async function createCard(root, group, raw, { before, after } = {}) {
   requireString(raw, 'raw');
   const dir = groupDir(root, group);
   await requireGroup(dir, group);
-  const place = await placement(root, group, before, after);
+  const place = placeNew((await loadDeck(root)).groups.find((g) => g.slug === group).order, { before, after }, group);
   const taken = await existingIds(root);
-  const body = raw.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '').replace(/^\s*\n/, '');
-  const content = `---\ncreated: ${new Date().toISOString()}\n---\n\n${body}`;
-  requireValid(content);
+  const content = newCardText(raw);
   for (;;) {
-    const id = Array.from({ length: 5 }, () => ID_CHARS[randomInt(ID_CHARS.length)]).join('');
-    if (taken.has(id)) continue;
+    const id = newCardId(taken, randomInt);
+    taken.add(id);
     try {
       await writeFile(cardFile(root, group, id), content, { flag: 'wx' });
     } catch (err) {
@@ -37,19 +30,6 @@ export async function createCard(root, group, raw, { before, after } = {}) {
     await updateGroupMeta(root, group, (meta) => ({ ...meta, order: place(id) }));
     return { id, group, version: cardVersion(content) };
   }
-}
-
-// Checked before the card is written, so a bad neighbour leaves the deck untouched.
-// The whole shown order is written, since cards the stored order leaves out would otherwise jump ahead of the new one.
-async function placement(root, group, before, after) {
-  if (before !== undefined && after !== undefined) throw new CardError(400, 'before 和 after 只能指定一個');
-  const neighbour = before ?? after;
-  const shown = (await loadDeck(root)).groups.find((g) => g.slug === group).order;
-  if (neighbour === undefined) return (id) => [...shown, id];
-  const at = shown.indexOf(neighbour);
-  if (at < 0) throw new CardError(404, `群組 ${group} 裡找不到卡片 ${neighbour}`);
-  const cut = before === undefined ? at + 1 : at;
-  return (id) => [...shown.slice(0, cut), id, ...shown.slice(cut)];
 }
 
 // Not atomic: a write landing between the read and our write is still overwritten.
@@ -141,12 +121,6 @@ export function reposition(list, item, { before, after }, missing) {
   const at = rest.indexOf(neighbour);
   if (at < 0) throw new CardError(404, missing(neighbour));
   return rest.toSpliced(before === undefined ? at + 1 : at, 0, item);
-}
-
-// The same rule for every writer, so a card that is saved can always be practiced.
-function requireValid(raw) {
-  const { errors } = parseCard(raw);
-  if (errors.length) throw new CardError(400, `卡片格式錯誤：${errors.join('；')}`);
 }
 
 function requireString(value, name) {
