@@ -11,6 +11,8 @@ const bundle = await build({
   entryPoints: [path.join(root, 'phone/entry.js')],
   bundle: true,
   format: 'esm',
+  // Older built-in browsers, such as an e-reader's, still get syntax they understand.
+  target: ['chrome89', 'safari15'],
   external: ['https://*'],
   write: false,
   logLevel: 'warning',

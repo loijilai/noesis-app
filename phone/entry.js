@@ -1,3 +1,4 @@
+import './polyfills.js';
 import { forgetSettings, loadSettings, saveSettings, start } from './backend.js';
 import { askForToken, showLoading } from './setup.js';
 
