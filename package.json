@@ -11,8 +11,6 @@
     "sync": "node scripts/sync.js",
     "test": "node --test",
     "phone:build": "node scripts/phone-build.js",
-    "phone:import": "node scripts/phone-import.js",
-    "phone:edits": "node scripts/phone-edits.js",
     "deck": "node scripts/deck.js"
   },
   "dependencies": {

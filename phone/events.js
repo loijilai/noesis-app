@@ -10,11 +10,7 @@ export function toEvent(body, now) {
   return null;
 }
 
-export function isEvent(event) {
-  return toEvent(event, new Date()) !== null && !Number.isNaN(Date.parse(event.time));
-}
-
-// The same event can arrive from the snapshot built into the page and from the store, so identity is its content.
+// A rating can be on GitHub and still waiting on the phone at once, so identity is its content.
 export function eventKey(event) {
   return [event.time, event.id, event.type, event.rating ?? ''].join('|');
 }
