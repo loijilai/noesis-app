@@ -295,7 +295,7 @@ function filterMenu(onchange) {
     onclick: () => {
       if (openMenu?.panel === panel) return closeMenu();
       closeMenu();
-      panel.hidden = false;
+      showPanel(panel);
       trigger.setAttribute('aria-expanded', 'true');
       openMenu = { wrap, panel, trigger };
     },
@@ -853,6 +853,13 @@ let openMenu = null;
 // Items are { label, onselect } or { label, items } for a list that expands inside the menu.
 // A disabled item may carry a `note` saying why. An item with `confirm` asks again in place
 // on the first click: the phone version runs in a sandboxed frame where confirm() is blocked.
+// Menus open leftward from a trigger at the right edge; one that wrapped to the left of a narrow screen opens rightward instead.
+function showPanel(panel) {
+  panel.hidden = false;
+  panel.classList.remove('align-left');
+  if (panel.getBoundingClientRect().left < 0) panel.classList.add('align-left');
+}
+
 function menu(items, { label = '⋯', class: triggerClass = 'menu-trigger' } = {}) {
   if (!items.some(Boolean)) return null;
   const panel = h('div', { class: 'menu', role: 'menu', hidden: true }, menuItems(items));
@@ -865,7 +872,7 @@ function menu(items, { label = '⋯', class: triggerClass = 'menu-trigger' } = {
     onclick: () => {
       if (openMenu?.panel === panel) return closeMenu();
       closeMenu();
-      panel.hidden = false;
+      showPanel(panel);
       trigger.setAttribute('aria-expanded', 'true');
       openMenu = { wrap, panel, trigger };
     },

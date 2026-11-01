@@ -387,6 +387,7 @@ button.menu-trigger:hover, button.menu-trigger[aria-expanded="true"] { backgroun
   background: var(--canvas); border: 1px solid var(--hairline); border-radius: var(--rounded-sm);
   box-shadow: var(--floating-shadow);
 }
+.menu.align-left { left: 0; right: auto; }
 .menu[hidden], .menu-sub[hidden] { display: none; }
 .menu button {
   justify-content: flex-start; min-height: 32px; padding: 0 var(--space-sm);
