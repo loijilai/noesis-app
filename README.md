@@ -56,12 +56,17 @@ npm run sync
 
 ## 手機版
 
-`npm run phone:build` 把卡片和進度打包成單一網頁 `phone/dist/index.html`，發布成 claude.ai Artifact 後用手機練習。手機上可以練習和修改卡片內容，不能新增、刪除、搬移卡片或改 group。評分和修改都存在 Artifact 的 db。
+手機版是同一個練習介面，部署在這個 repo 的 GitHub Pages：<https://loijilai.github.io/noesis-app/>。push 到 `master` 後，GitHub Actions 會跑測試、打包並自動部署。
 
-- `npm run phone:import -- <db 匯出的 JSON>` 把評分寫回 `progress/phone.jsonl`，已經導入過的會自動略過。
-- `npm run phone:edits -- <db 匯出的 JSON>` 把卡片修改寫回 `decks/`。電腦上在這段時間也改過的卡片不會被覆蓋，會列成衝突；確定要用手機的版本時加 `--take <id>`。
+頁面本身不含任何卡片。第一次打開時輸入資料 repo 的名稱（`owner/repo`）和 fine-grained token，之後直接從 GitHub 讀寫：
 
-用 Claude Code 時，說「同步手機」或 `/phone-sync`，會把手機的評分和卡片修改寫回 repo，再用最新的卡片更新手機版。
+- token 只開資料 repo，Repository permissions 的 Contents 設為 **Read and write**，期限可以選 No expiration。token 只存在手機的瀏覽器裡，不要寫進任何檔案。
+- 打開頁面時比對檔案列表的 `sha`，只下載有變的檔案，下載過的存在手機裡。圖片在顯示時才下載。
+- 評分先存在手機，練習停下來、離開練習頁面或切到背景時，一次 append 到 `progress/phone.jsonl`。寫不出去的會留著，下次再寫。
+- 修改和刪除卡片都帶著手機看到的版本寫入；電腦在這段時間改過同一張卡的話，GitHub 會拒絕，不會蓋掉電腦的版本。刪除時 `.md` 和 `_group.json` 在同一個 commit 裡改。
+- 手機上不能新增、搬移卡片，也不能改 group。
+
+`npm run phone:build` 在本機打包同一個頁面到 `phone/dist/index.html`。
 
 ## 環境變數
 

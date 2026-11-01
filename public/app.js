@@ -840,7 +840,7 @@ function cardMenu(deck, card, { edit, insert, report, done = render }) {
     schedule && (schedule.suspended
       ? { label: '取消封存', onselect: () => progress('unsuspend') }
       : { label: '封存', confirm: '確定封存？', onselect: () => progress('suspend') }),
-    !deck.readOnly && {
+    (!deck.readOnly || deck.canDelete) && {
       label: '刪除',
       confirm: '確定刪除這張卡？',
       onselect: () => run(() => api('DELETE', cardUrl(card)), '刪除失敗'),

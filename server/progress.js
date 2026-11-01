@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { CONFIG_FILE } from './config.js';
+import { parseEvents } from './progress-lines.js';
 
 const DEVICE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const CARD_ID = /^[a-z0-9]{5}$/;
@@ -50,22 +51,9 @@ export async function readEvents(progressDir, knownIds) {
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith('.jsonl') || entry.name.startsWith('.')) continue;
     const device = entry.name.slice(0, -'.jsonl'.length);
-    for (const line of (await readFile(path.join(progressDir, entry.name), 'utf8')).split('\n')) {
-      const event = parseLine(line);
-      if (event && (!knownIds || knownIds.has(event.id))) events.push({ ...event, device });
+    for (const event of parseEvents(await readFile(path.join(progressDir, entry.name), 'utf8'), device)) {
+      if (!knownIds || knownIds.has(event.id)) events.push(event);
     }
   }
   return events.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
-}
-
-function parseLine(line) {
-  if (!line.trim()) return null;
-  let event;
-  try {
-    event = JSON.parse(line);
-  } catch {
-    return null;
-  }
-  const ok = typeof event?.id === 'string' && typeof event.type === 'string' && !Number.isNaN(Date.parse(event.time));
-  return ok ? event : null;
 }

@@ -240,6 +240,12 @@ button.edit-trigger:hover { background: var(--field); }
 
 .group-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
 .group-form input { padding: var(--space-xs) var(--space-md); }
+.setup { display: flex; flex-direction: column; gap: var(--space-md); }
+.setup h2 { margin: 0; }
+.setup p { margin: 0; }
+.setup label { display: flex; flex-direction: column; gap: var(--space-xs); font-size: 14px; color: var(--text-muted); }
+.setup input { background: var(--canvas); }
+.setup button { align-self: flex-start; }
 li.dragging { opacity: 0.4; }
 /* Moving the dragged row above the scroll anchor would make the browser scroll back to compensate. */
 html:has(li.dragging) { overflow-anchor: none; }
