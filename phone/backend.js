@@ -11,9 +11,8 @@ import { createStore } from './store.js';
 const SETTINGS_KEY = 'noesis-github';
 const PENDING_KEY = 'noesis-pending';
 const CHANGES_KEY = 'noesis-changes';
-// Ratings go out together once practice pauses, so a round is one commit rather than one per card.
+// Everything goes out together once the user pauses, so a round of practice and its edits is one commit.
 const FLUSH_AFTER_MS = 90e3;
-const CARD_FLUSH_AFTER_MS = 10e3;
 const RECHECK_AFTER_MS = 30e3;
 const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
 
@@ -50,8 +49,6 @@ export function forgetSettings() {
 let store;
 let gh;
 let flushTimer;
-let ratingsDue = Infinity;
-let cardsDue = Infinity;
 let syncing = false;
 let syncError = null;
 let lastCheck = 0;
@@ -69,7 +66,6 @@ export async function start(settings, onProgress) {
 
 async function flush() {
   clearTimeout(flushTimer);
-  ratingsDue = cardsDue = Infinity;
   if (!store.hasPending()) return;
   const before = [store.commit(), store.status().conflicts];
   syncing = true;
@@ -86,12 +82,9 @@ async function flush() {
   if (store.commit() !== before[0] || store.status().conflicts !== before[1]) changed();
 }
 
-// Each rating pushes its send back, so a round goes out once practice pauses; a card change is sent soon after the first one, whatever follows.
-function flushLater({ rating = false } = {}) {
-  if (rating) ratingsDue = Date.now() + FLUSH_AFTER_MS;
-  else cardsDue = Math.min(cardsDue, Date.now() + CARD_FLUSH_AFTER_MS);
+function flushLater() {
   clearTimeout(flushTimer);
-  flushTimer = setTimeout(flush, Math.min(ratingsDue, cardsDue) - Date.now());
+  flushTimer = setTimeout(flush, FLUSH_AFTER_MS);
 }
 
 function syncStatus() {
@@ -151,7 +144,7 @@ async function handle(path, method, body) {
     if (!event) return json(400, { error: 'id、type 或 rating 不合法' });
     if (!store.deck().cards.some((c) => c.id === event.id)) return json(404, { error: `找不到卡片 ${event.id}` });
     store.record(event);
-    flushLater({ rating: true });
+    flushLater();
     announce();
     return json(201, event);
   }
