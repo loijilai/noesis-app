@@ -10,23 +10,25 @@ import { createStore } from './store.js';
 
 const SETTINGS_KEY = 'noesis-github';
 const PENDING_KEY = 'noesis-pending';
+const CHANGES_KEY = 'noesis-changes';
 // Ratings go out together once practice pauses, so a round is one commit rather than one per card.
 const FLUSH_AFTER_MS = 90e3;
+const CARD_FLUSH_AFTER_MS = 10e3;
 const RECHECK_AFTER_MS = 30e3;
 const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
 
-const pending = {
+const stored = (key) => ({
   get() {
     try {
-      return JSON.parse(localStorage.getItem(PENDING_KEY) ?? '[]');
+      return JSON.parse(localStorage.getItem(key) ?? '[]');
     } catch {
       return [];
     }
   },
   set(list) {
-    localStorage.setItem(PENDING_KEY, JSON.stringify(list));
+    localStorage.setItem(key, JSON.stringify(list));
   },
-};
+});
 
 export function loadSettings() {
   try {
@@ -48,26 +50,64 @@ export function forgetSettings() {
 let store;
 let gh;
 let flushTimer;
+let ratingsDue = Infinity;
+let cardsDue = Infinity;
+let syncing = false;
+let syncError = null;
 let lastCheck = 0;
 const listeners = new Set();
 
 export async function start(settings, onProgress) {
   gh = gitHub(settings);
   await openCache();
-  store = createStore({ gh, branch: settings.branch, pending, cached });
+  store = createStore({ gh, branch: settings.branch, pending: stored(PENDING_KEY), changes: stored(CHANGES_KEY), cached });
   await store.refresh(onProgress);
   lastCheck = Date.now();
   install();
   flush();
 }
 
-function flush() {
+async function flush() {
   clearTimeout(flushTimer);
-  if (store.hasPending()) store.flush().catch((err) => console.error('noesis: 評分還沒寫進 GitHub', err));
+  ratingsDue = cardsDue = Infinity;
+  if (!store.hasPending()) return;
+  const before = [store.commit(), store.status().conflicts];
+  syncing = true;
+  announce();
+  try {
+    await store.flush();
+    syncError = null;
+  } catch (err) {
+    syncError = err.message ?? String(err);
+    console.error('noesis: 還沒寫進 GitHub', err);
+  }
+  syncing = false;
+  announce();
+  if (store.commit() !== before[0] || store.status().conflicts !== before[1]) changed();
 }
 
-async function recheck() {
-  if (Date.now() - lastCheck < RECHECK_AFTER_MS) return;
+// Each rating pushes its send back, so a round goes out once practice pauses; a card change is sent soon after the first one, whatever follows.
+function flushLater({ rating = false } = {}) {
+  if (rating) ratingsDue = Date.now() + FLUSH_AFTER_MS;
+  else cardsDue = Math.min(cardsDue, Date.now() + CARD_FLUSH_AFTER_MS);
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(flush, Math.min(ratingsDue, cardsDue) - Date.now());
+}
+
+function syncStatus() {
+  return { ...store.status(), syncing, error: syncError };
+}
+
+function announce() {
+  dispatchEvent(new CustomEvent('noesis-sync', { detail: syncStatus() }));
+}
+
+function changed() {
+  for (const listener of listeners) listener(new MessageEvent('message'));
+}
+
+async function recheck(after = RECHECK_AFTER_MS) {
+  if (Date.now() - lastCheck < after) return;
   lastCheck = Date.now();
   const before = store.commit();
   try {
@@ -75,7 +115,12 @@ async function recheck() {
   } catch (err) {
     return console.error(err);
   }
-  if (store.commit() !== before) for (const listener of listeners) listener(new MessageEvent('message'));
+  if (store.commit() !== before) changed();
+}
+
+function cardChanged() {
+  flushLater();
+  announce();
 }
 
 function json(status, data) {
@@ -89,7 +134,12 @@ async function handle(path, method, body) {
     const ids = new Set(deck.cards.map((c) => c.id));
     const known = store.events().filter((e) => ids.has(e.id));
     // The page hides what only the desktop can do; adding and deleting cards are the structural changes the phone makes.
-    if (path === '/api/deck') return json(200, { ...deck, cards: deck.cards.map(withAssetLinks), readOnly: true, canAdd: true, canDelete: true });
+    if (path === '/api/deck') {
+      const conflicts = store.conflicts().map((c) => c.id);
+      return json(200, { ...deck, cards: deck.cards.map(withAssetLinks), readOnly: true, canAdd: true, canDelete: true, canSync: true, conflicts });
+    }
+    if (path === '/api/sync') return json(200, syncStatus());
+    if (path === '/api/conflicts') return json(200, { conflicts: store.conflicts() });
     if (path === '/api/schedule') return json(200, { cards: cardSchedules(deck, known, now) });
     if (path === '/api/smart-groups') return json(200, { groups: smartGroups(deck, known, now) });
     if (path === '/api/progress') return json(200, { events: known });
@@ -101,13 +151,27 @@ async function handle(path, method, body) {
     if (!event) return json(400, { error: 'id、type 或 rating 不合法' });
     if (!store.deck().cards.some((c) => c.id === event.id)) return json(404, { error: `找不到卡片 ${event.id}` });
     store.record(event);
-    clearTimeout(flushTimer);
-    flushTimer = setTimeout(flush, FLUSH_AFTER_MS);
+    flushLater({ rating: true });
+    announce();
     return json(201, event);
+  }
+  if (path === '/api/sync' && method === 'POST') {
+    await flush();
+    await recheck(0);
+    return json(200, syncStatus());
+  }
+  const conflict = path.match(/^\/api\/conflicts\/([^/]+)$/);
+  if (conflict && method === 'POST') {
+    const { use, raw } = JSON.parse(body ?? '{}');
+    store.resolve(decodeURIComponent(conflict[1]), use, raw);
+    cardChanged();
+    return json(204);
   }
   if (path === '/api/cards' && method === 'POST') {
     const { group, raw, before, after } = JSON.parse(body ?? '{}');
-    return json(201, await store.createCard(group, raw, { before, after }));
+    const created = store.createCard(group, raw, { before, after });
+    cardChanged();
+    return json(201, created);
   }
   const card = path.match(/^\/api\/cards\/([^/]+)\/([^/]+)(\/schedule)?$/);
   if (!card) return json(403, { error: '手機版不能搬移卡片或改群組，請在電腦上做' });
@@ -115,15 +179,20 @@ async function handle(path, method, body) {
   if (card[3] && method === 'PUT') {
     const { schedule } = JSON.parse(body ?? '{}');
     if (!isSchedule(schedule)) return json(400, { error: `schedule 不合法：${schedule}` });
-    return json(200, await store.setSchedule(group, id, schedule));
+    const saved = store.setSchedule(group, id, schedule);
+    cardChanged();
+    return json(200, saved);
   }
   if (card[3]) return json(405, { error: 'method not allowed' });
   if (method === 'PUT') {
     const { raw, version } = JSON.parse(body ?? '{}');
-    return json(200, await store.saveCard(group, id, raw, version));
+    const saved = store.saveCard(group, id, raw, version);
+    cardChanged();
+    return json(200, saved);
   }
   if (method === 'DELETE') {
-    await store.deleteCard(group, id);
+    store.deleteCard(group, id);
+    cardChanged();
     return json(204);
   }
   return json(405, { error: 'method not allowed' });

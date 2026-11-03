@@ -15,14 +15,31 @@ const FILES = {
   'README.md': 'not read',
 };
 
-async function setup(files = FILES) {
+const memory = () => {
+  let list = [];
+  return { get: () => list, set: (next) => { list = next; } };
+};
+
+async function setup(files = FILES, fetch) {
   const remote = fakeGitHub(files);
-  let queue = [];
-  const pending = { get: () => queue, set: (list) => { queue = list; } };
-  const store = createStore({ gh: gitHub({ token: 't', repo: 'me/data', fetch: remote.fetch }), branch: 'master', pending });
+  const pending = memory();
+  const changes = memory();
+  const store = createStore({ gh: gitHub({ token: 't', repo: 'me/data', fetch: fetch?.(remote) ?? remote.fetch }), branch: 'master', pending, changes });
   await store.refresh();
-  return { remote, store, pending };
+  return { remote, store, pending, changes };
 }
+
+// Lets the desktop push once, right when the phone is about to move the branch.
+const pushBeforeCommit = (changes) => (remote) => {
+  let done = false;
+  return async (url, init) => {
+    if (init?.method === 'PATCH' && !done) {
+      done = true;
+      remote.push(changes);
+    }
+    return remote.fetch(url, init);
+  };
+};
 
 const review = (id, time) => ({ time, id, type: 'review', rating: 'good' });
 
@@ -69,8 +86,8 @@ test('a rating survives a failed write and goes out on the next flush', async ()
   const { remote, store, pending } = await setup();
   store.record(review('aaaaa', '2026-02-01T00:00:00.000Z'));
   const real = remote.fetch;
-  const gh = gitHub({ token: 't', repo: 'me/data', fetch: async (url, init) => (init?.method === 'PUT' ? new Response('{}', { status: 502 }) : real(url, init)) });
-  const offline = createStore({ gh, branch: 'master', pending });
+  const gh = gitHub({ token: 't', repo: 'me/data', fetch: async (url, init) => (init?.method === 'POST' ? new Response('{}', { status: 502 }) : real(url, init)) });
+  const offline = createStore({ gh, branch: 'master', pending, changes: memory() });
   await offline.refresh();
   await assert.rejects(offline.flush());
   assert.equal(pending.get().length, 1);
@@ -78,149 +95,236 @@ test('a rating survives a failed write and goes out on the next flush', async ()
   assert.equal(remote.read('progress/phone.jsonl').trim().split('\n').length, 1);
 });
 
-test('an edit is written with the sha the phone saw', async () => {
+const cardOf = (store, id) => store.deck().cards.find((c) => c.id === id);
+const order = (remote) => JSON.parse(remote.read('decks/g/_group.json')).order;
+const DRAFT = '## Question\n\nnew\n\n## Answer\n\nyes\n';
+
+test('an edit shows at once and reaches GitHub only on flush', async () => {
   const { remote, store } = await setup();
-  const before = store.deck().cards.find((c) => c.id === 'aaaaa');
-  const saved = await store.saveCard('g', 'aaaaa', card('edited'), before.version);
+  const saved = store.saveCard('g', 'aaaaa', card('edited'), cardOf(store, 'aaaaa').version);
+  assert.equal(remote.read('decks/g/aaaaa.md'), card('one'));
+  assert.equal(cardOf(store, 'aaaaa').raw, card('edited'));
+  assert.equal(cardOf(store, 'aaaaa').version, saved.version);
+  assert.deepEqual(store.status(), { pending: 1, conflicts: 0 });
+
+  await store.flush();
   assert.equal(remote.read('decks/g/aaaaa.md'), card('edited'));
-  assert.deepEqual(remote.log(), ['phone: edit g/aaaaa', 'init']);
-  assert.equal(saved.version, store.blobSha('decks/g/aaaaa.md'));
-  assert.notEqual(saved.version, before.version);
+  assert.deepEqual(remote.log(), ['sync: phone', 'init']);
+  assert.equal(cardOf(store, 'aaaaa').version, store.blobSha('decks/g/aaaaa.md'));
+  assert.deepEqual(store.status(), { pending: 0, conflicts: 0 });
 });
 
-test('an edit of a card the desktop changed in the meantime is refused and changes nothing', async () => {
+test('edits, a new card, a delete and ratings go out in one commit', async () => {
   const { remote, store } = await setup();
-  const seen = store.deck().cards.find((c) => c.id === 'aaaaa').version;
-  remote.push({ 'decks/g/aaaaa.md': card('desktop') });
-  await assert.rejects(store.saveCard('g', 'aaaaa', card('phone'), seen), { status: 409, message: /電腦上改過/ });
-  assert.equal(remote.read('decks/g/aaaaa.md'), card('desktop'));
+  store.saveCard('g', 'aaaaa', card('edited'), cardOf(store, 'aaaaa').version);
+  const { id } = store.createCard('g', DRAFT);
+  store.deleteCard('g', 'bbbbb');
+  store.record(review('aaaaa', '2026-02-01T00:00:00.000Z'));
+  await store.flush();
+  assert.deepEqual(remote.log(), ['sync: phone', 'init']);
+  assert.equal(remote.read('decks/g/aaaaa.md'), card('edited'));
+  assert.equal(remote.read('decks/g/bbbbb.md'), undefined);
+  assert.match(remote.read(`decks/g/${id}.md`), /## Question\n\nnew/);
+  assert.deepEqual(order(remote), ['aaaaa', id]);
+  assert.equal(remote.read('progress/phone.jsonl').trim().split('\n').length, 1);
 });
 
-test('a malformed edit is refused before it reaches GitHub', async () => {
-  const { remote, store } = await setup();
-  const seen = store.deck().cards.find((c) => c.id === 'aaaaa').version;
-  await assert.rejects(store.saveCard('g', 'aaaaa', 'nonsense', seen), { status: 400 });
-  assert.deepEqual(remote.log(), ['init']);
+test('a card changed twice is sent once, and one added then deleted is never sent', async () => {
+  const { remote, store, changes } = await setup();
+  store.saveCard('g', 'aaaaa', card('first'), cardOf(store, 'aaaaa').version);
+  store.saveCard('g', 'aaaaa', card('second'), cardOf(store, 'aaaaa').version);
+  const { id } = store.createCard('g', DRAFT);
+  store.deleteCard('g', id);
+  assert.equal(changes.get().length, 1);
+  await store.flush();
+  assert.equal(remote.read('decks/g/aaaaa.md'), card('second'));
+  assert.equal(remote.read(`decks/g/${id}.md`), undefined);
+  assert.deepEqual(order(remote), ['aaaaa', 'bbbbb']);
+});
+
+test('an edit with a stale version or malformed text is refused and nothing is kept', async () => {
+  const { store, changes } = await setup();
+  assert.throws(() => store.saveCard('g', 'aaaaa', card('x'), 'old'), { status: 409 });
+  assert.throws(() => store.saveCard('g', 'aaaaa', 'nonsense', cardOf(store, 'aaaaa').version), { status: 400 });
+  assert.deepEqual(changes.get(), []);
 });
 
 test('a schedule change is an edit of the card text', async () => {
   const { remote, store } = await setup();
-  await store.setSchedule('g', 'bbbbb', '30d');
+  store.setSchedule('g', 'bbbbb', '30d');
+  await store.flush();
   assert.match(remote.read('decks/g/bbbbb.md'), /^schedule: 30d$/m);
 });
 
-test('a delete removes the card and its place in _group.json in one commit', async () => {
+test('a new card can go last, or right before or after another', async () => {
   const { remote, store } = await setup();
-  await store.deleteCard('g', 'aaaaa');
-  assert.equal(remote.read('decks/g/aaaaa.md'), undefined);
-  assert.deepEqual(JSON.parse(remote.read('decks/g/_group.json')), { name: 'G', order: ['bbbbb'] });
-  assert.deepEqual(remote.log(), ['phone: delete g/aaaaa', 'init']);
-  assert.deepEqual(store.deck().cards.map((c) => c.id), ['bbbbb']);
-});
-
-test('a delete goes through when only other files changed since the phone loaded', async () => {
-  const { remote, store } = await setup();
-  remote.push({ 'progress/home.jsonl': '' });
-  await store.deleteCard('g', 'aaaaa');
-  assert.equal(remote.read('decks/g/aaaaa.md'), undefined);
-  assert.equal(remote.read('progress/home.jsonl'), '');
-});
-
-test('a delete of a card the desktop changed in the meantime is refused and the card stays', async () => {
-  const { remote, store } = await setup();
-  remote.push({ 'decks/g/aaaaa.md': card('desktop') });
-  await assert.rejects(store.deleteCard('g', 'aaaaa'), { status: 409 });
-  assert.equal(remote.read('decks/g/aaaaa.md'), card('desktop'));
-  assert.match(remote.read('decks/g/_group.json'), /aaaaa/);
-});
-
-test('a push landing between the phone\'s read and its commit is not overwritten', async () => {
-  const { remote, store } = await setup();
-  const real = remote.fetch;
-  let raced = false;
-  const gh = gitHub({ token: 't', repo: 'me/data', fetch: async (url, init) => {
-    if (init?.method === 'PATCH' && !raced) {
-      raced = true;
-      remote.push({ 'progress/home.jsonl': 'desktop\n' });
-    }
-    return real(url, init);
-  } });
-  const racing = createStore({ gh, branch: 'master', pending: { get: () => [], set() {} } });
-  await racing.refresh();
-  await racing.deleteCard('g', 'aaaaa');
-  assert.equal(remote.read('progress/home.jsonl'), 'desktop\n');
-  assert.equal(remote.read('decks/g/aaaaa.md'), undefined);
-  assert.deepEqual(remote.log(), ['phone: delete g/aaaaa', 'desktop', 'init']);
-});
-
-const order = (remote) => JSON.parse(remote.read('decks/g/_group.json')).order;
-const DRAFT = '## Question\n\nnew\n\n## Answer\n\nyes\n';
-
-test('a new card goes last by default, with its file and its place in one commit', async () => {
-  const { remote, store } = await setup();
-  const created = await store.createCard('g', DRAFT);
-  assert.match(created.id, /^[a-z0-9]{5}$/);
-  assert.deepEqual(order(remote), ['aaaaa', 'bbbbb', created.id]);
-  assert.match(remote.read(`decks/g/${created.id}.md`), /^---\ncreated: \d{4}-\d\d-\d\dT[\d:.]+Z\n---\n\n## Question\n\nnew\n/);
-  assert.deepEqual(remote.log(), [`phone: add g/${created.id}`, 'init']);
-  assert.equal(created.version, store.blobSha(`decks/g/${created.id}.md`));
-  assert.ok(store.deck().cards.some((c) => c.id === created.id));
-});
-
-test('a new card can go right before or after another', async () => {
-  const { remote, store } = await setup();
-  const before = await store.createCard('g', DRAFT, { before: 'bbbbb' });
-  assert.deepEqual(order(remote), ['aaaaa', before.id, 'bbbbb']);
-  const after = await store.createCard('g', DRAFT, { after: 'aaaaa' });
-  assert.deepEqual(order(remote), ['aaaaa', after.id, before.id, 'bbbbb']);
+  const last = store.createCard('g', DRAFT);
+  const before = store.createCard('g', DRAFT, { before: 'bbbbb' });
+  const after = store.createCard('g', DRAFT, { after: 'aaaaa' });
+  assert.deepEqual(store.deck().groups[0].order, ['aaaaa', after.id, before.id, 'bbbbb', last.id]);
+  await store.flush();
+  assert.deepEqual(order(remote), ['aaaaa', after.id, before.id, 'bbbbb', last.id]);
 });
 
 test('a draft\'s own frontmatter is replaced by the creation time', async () => {
   const { remote, store } = await setup();
-  const { id } = await store.createCard('g', `---\nschedule: none\ncreated: 1999-01-01T00:00:00Z\n---\n\n${DRAFT}`);
-  const text = remote.read(`decks/g/${id}.md`);
-  assert.doesNotMatch(text, /1999|schedule/);
+  const { id } = store.createCard('g', `---\nschedule: none\ncreated: 1999-01-01T00:00:00Z\n---\n\n${DRAFT}`);
+  await store.flush();
+  assert.match(remote.read(`decks/g/${id}.md`), /^---\ncreated: \d{4}-\d\d-\d\dT[\d:.]+Z\n---\n\n## Question\n\nnew\n/);
+  assert.doesNotMatch(remote.read(`decks/g/${id}.md`), /1999|schedule/);
 });
 
-test('a malformed draft, an unknown group or neighbour changes nothing', async () => {
-  const { remote, store } = await setup();
-  await assert.rejects(store.createCard('g', 'nonsense'), { status: 400 });
-  await assert.rejects(store.createCard('nope', DRAFT), { status: 404 });
-  await assert.rejects(store.createCard('g', DRAFT, { after: 'zzzzz' }), { status: 404 });
-  assert.deepEqual(remote.log(), ['init']);
+test('a malformed draft, an unknown group or neighbour is refused', async () => {
+  const { store, changes } = await setup();
+  assert.throws(() => store.createCard('g', 'nonsense'), { status: 400 });
+  assert.throws(() => store.createCard('nope', DRAFT), { status: 404 });
+  assert.throws(() => store.createCard('g', DRAFT, { after: 'zzzzz' }), { status: 404 });
+  assert.deepEqual(changes.get(), []);
 });
 
 test('a new id never reuses one taken in another group', async () => {
   const picks = [2, 2, 2, 2, 2, 3, 3, 3, 3, 3];
   const remote = fakeGitHub({ ...FILES, 'decks/h/ccccc.md': card('elsewhere') });
-  const store = createStore({ gh: gitHub({ token: 't', repo: 'me/data', fetch: remote.fetch }), branch: 'master', pending: { get: () => [], set() {} }, random: () => picks.shift() });
+  const store = createStore({ gh: gitHub({ token: 't', repo: 'me/data', fetch: remote.fetch }), branch: 'master', pending: memory(), changes: memory(), random: () => picks.shift() });
   await store.refresh();
-  const { id } = await store.createCard('g', DRAFT);
-  assert.equal(id, 'ddddd');
-});
-
-test('a reorder pushed from the desktop while the phone adds a card is kept', async () => {
-  const { remote } = await setup();
-  const real = remote.fetch;
-  let raced = false;
-  const gh = gitHub({ token: 't', repo: 'me/data', fetch: async (url, init) => {
-    if (init?.method === 'PATCH' && !raced) {
-      raced = true;
-      remote.push({ 'decks/g/_group.json': '{\n  "name": "G",\n  "order": [\n    "bbbbb",\n    "aaaaa"\n  ]\n}\n' });
-    }
-    return real(url, init);
-  } });
-  const store = createStore({ gh, branch: 'master', pending: { get: () => [], set() {} } });
-  await store.refresh();
-  const { id } = await store.createCard('g', DRAFT);
-  assert.deepEqual(order(remote), ['bbbbb', 'aaaaa', id]);
-  assert.deepEqual(remote.log(), [`phone: add g/${id}`, 'desktop', 'init']);
+  assert.equal(store.createCard('g', DRAFT).id, 'ddddd');
 });
 
 test('a group with no _group.json gets one when a card is added', async () => {
   const files = { ...FILES };
   delete files['decks/g/_group.json'];
   const { remote, store } = await setup(files);
-  const { id } = await store.createCard('g', DRAFT);
+  const { id } = store.createCard('g', DRAFT);
+  await store.flush();
   assert.deepEqual(JSON.parse(remote.read('decks/g/_group.json')), { order: ['aaaaa', 'bbbbb', id] });
+});
+
+test('a push landing between the phone\'s read and its commit is kept, and the phone tries again', async () => {
+  const reorder = { 'decks/g/_group.json': '{\n  "name": "G",\n  "order": [\n    "bbbbb",\n    "aaaaa"\n  ]\n}\n' };
+  const { remote, store } = await setup(FILES, pushBeforeCommit(reorder));
+  const { id } = store.createCard('g', DRAFT);
+  await store.flush();
+  assert.deepEqual(order(remote), ['bbbbb', 'aaaaa', id]);
+  assert.deepEqual(remote.log(), ['sync: phone', 'desktop', 'init']);
+});
+
+test('a new card whose neighbour the desktop deleted goes last', async () => {
+  const { remote, store } = await setup();
+  const { id } = store.createCard('g', DRAFT, { after: 'aaaaa' });
+  remote.push({ 'decks/g/aaaaa.md': null, 'decks/g/_group.json': '{\n  "name": "G",\n  "order": [\n    "bbbbb"\n  ]\n}\n' });
+  await store.flush();
+  assert.deepEqual(order(remote), ['bbbbb', id]);
+});
+
+test('an edit follows a card the desktop moved to another group', async () => {
+  const { remote, store } = await setup();
+  store.saveCard('g', 'aaaaa', card('edited'), cardOf(store, 'aaaaa').version);
+  remote.push({ 'decks/g/aaaaa.md': null, 'decks/h/aaaaa.md': card('one') });
+  await store.flush();
+  assert.equal(remote.read('decks/h/aaaaa.md'), card('edited'));
+  assert.equal(remote.read('decks/g/aaaaa.md'), undefined);
+});
+
+test('a card the desktop changed the same way is no conflict', async () => {
+  const { remote, store } = await setup();
+  store.saveCard('g', 'aaaaa', card('same'), cardOf(store, 'aaaaa').version);
+  remote.push({ 'decks/g/aaaaa.md': card('same') });
+  await store.flush();
+  assert.deepEqual(store.status(), { pending: 0, conflicts: 0 });
+  assert.deepEqual(remote.log(), ['desktop', 'init']);
+});
+
+test('an edit of a card the desktop also changed waits as a conflict, and the rest still goes out', async () => {
+  const { remote, store } = await setup();
+  store.saveCard('g', 'aaaaa', card('phone'), cardOf(store, 'aaaaa').version);
+  store.saveCard('g', 'bbbbb', card('fine'), cardOf(store, 'bbbbb').version);
+  remote.push({ 'decks/g/aaaaa.md': card('desktop') });
+  await store.flush();
+  assert.equal(remote.read('decks/g/aaaaa.md'), card('desktop'));
+  assert.equal(remote.read('decks/g/bbbbb.md'), card('fine'));
+  assert.deepEqual(store.status(), { pending: 0, conflicts: 1 });
+  assert.equal(store.hasPending(), false);
+  assert.deepEqual(store.conflicts(), [{ id: 'aaaaa', group: 'g', groupName: 'G', phone: card('phone'), desktop: card('desktop'), missingGroup: false }]);
+  assert.equal(cardOf(store, 'aaaaa').raw, card('phone'));
+});
+
+test('taking the phone\'s side, edited, writes it over the desktop\'s', async () => {
+  const { remote, store } = await setup();
+  store.saveCard('g', 'aaaaa', card('phone'), cardOf(store, 'aaaaa').version);
+  remote.push({ 'decks/g/aaaaa.md': card('desktop') });
+  await store.flush();
+  store.resolve('aaaaa', 'phone', card('merged'));
+  assert.deepEqual(store.status(), { pending: 1, conflicts: 0 });
+  await store.flush();
+  assert.equal(remote.read('decks/g/aaaaa.md'), card('merged'));
+  assert.deepEqual(store.status(), { pending: 0, conflicts: 0 });
+});
+
+test('taking the desktop\'s side drops the phone\'s change', async () => {
+  const { remote, store } = await setup();
+  store.saveCard('g', 'aaaaa', card('phone'), cardOf(store, 'aaaaa').version);
+  remote.push({ 'decks/g/aaaaa.md': card('desktop') });
+  await store.flush();
+  store.resolve('aaaaa', 'desktop');
+  assert.equal(cardOf(store, 'aaaaa').raw, card('desktop'));
+  assert.deepEqual(store.status(), { pending: 0, conflicts: 0 });
+  assert.throws(() => store.resolve('aaaaa', 'desktop'), { status: 404 });
+});
+
+test('a delete of a card the desktop changed is a conflict; taking the phone\'s side deletes it', async () => {
+  const { remote, store } = await setup();
+  store.deleteCard('g', 'aaaaa');
+  remote.push({ 'decks/g/aaaaa.md': card('desktop') });
+  await store.flush();
+  assert.equal(store.conflicts()[0].phone, null);
+  assert.equal(remote.read('decks/g/aaaaa.md'), card('desktop'));
+  store.resolve('aaaaa', 'phone');
+  await store.flush();
+  assert.equal(remote.read('decks/g/aaaaa.md'), undefined);
+  assert.deepEqual(order(remote), ['bbbbb']);
+});
+
+test('an edit of a card the desktop deleted is a conflict; taking the phone\'s side adds it back', async () => {
+  const { remote, store } = await setup();
+  store.saveCard('g', 'aaaaa', card('phone'), cardOf(store, 'aaaaa').version);
+  remote.push({ 'decks/g/aaaaa.md': null, 'decks/g/_group.json': '{\n  "name": "G",\n  "order": [\n    "bbbbb"\n  ]\n}\n' });
+  await store.flush();
+  assert.equal(store.conflicts()[0].desktop, null);
+  store.resolve('aaaaa', 'phone');
+  await store.flush();
+  assert.equal(remote.read('decks/g/aaaaa.md'), card('phone'));
+  assert.deepEqual(order(remote), ['bbbbb', 'aaaaa']);
+});
+
+test('a card added to a group the desktop removed cannot take the phone\'s side', async () => {
+  const { remote, store } = await setup();
+  const { id } = store.createCard('g', DRAFT);
+  remote.push({ 'decks/g/aaaaa.md': null, 'decks/g/bbbbb.md': null, 'decks/g/_group.json': null });
+  await store.flush();
+  assert.equal(store.conflicts()[0].missingGroup, true);
+  assert.throws(() => store.resolve(id, 'phone'), { status: 409 });
+  store.resolve(id, 'desktop');
+  assert.deepEqual(store.status(), { pending: 0, conflicts: 0 });
+});
+
+test('a card edited again while it was being sent stays, based on what was sent', async () => {
+  let store;
+  const ctx = await setup(FILES, (remote) => {
+    let done = false;
+    return async (url, init) => {
+      if (init?.method === 'PATCH' && !done) {
+        done = true;
+        store.saveCard('g', 'aaaaa', card('later'), cardOf(store, 'aaaaa').version);
+      }
+      return remote.fetch(url, init);
+    };
+  });
+  store = ctx.store;
+  store.saveCard('g', 'aaaaa', card('first'), cardOf(store, 'aaaaa').version);
+  await store.flush();
+  assert.equal(ctx.remote.read('decks/g/aaaaa.md'), card('first'));
+  assert.deepEqual(store.status(), { pending: 1, conflicts: 0 });
+  await store.flush();
+  assert.equal(ctx.remote.read('decks/g/aaaaa.md'), card('later'));
+  assert.deepEqual(store.status(), { pending: 0, conflicts: 0 });
 });

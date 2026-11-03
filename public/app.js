@@ -10,11 +10,15 @@ const RATING_LABELS = new Map([...RATINGS, ...SEEN]);
 const SCHEDULES = ['fsrs', '7d', '30d', '90d', 'none'];
 const SMART_ROUND_SIZE = 20;
 let session = null;
+// Only the phone keeps changes to send later; without that the sync controls stay hidden.
+let syncStatus = null;
 
 async function fetchDeck() {
   const [res, smartGroups, schedule, activity] = await Promise.all([fetch('/api/deck'), fetchSmartGroups(), fetchSchedule(), fetchActivity()]);
   if (!res.ok) throw new Error(`讀取題庫失敗（${res.status}）`);
-  return { ...(await res.json()), smartGroups, schedule, activity };
+  const deck = await res.json();
+  if (deck.canSync) syncStatus = await api('GET', '/api/sync');
+  return { ...deck, smartGroups, schedule, activity };
 }
 
 async function fetchActivity() {
@@ -118,8 +122,36 @@ function breadcrumb(...trail) {
     const last = i === crumbs.length - 1;
     const crumb = last ? h('span', { 'aria-current': 'page' }, label) : h('a', { href }, label);
     return i ? [h('span', { class: 'sep' }, '/'), crumb] : [crumb];
-  }), themeToggle());
+  }), syncChip(), themeToggle());
 }
+
+function syncChip() {
+  if (!syncStatus) return null;
+  const chip = h('button', { type: 'button', class: 'sync-chip' });
+  chip.addEventListener('click', () => {
+    if (syncStatus.conflicts) location.hash = '#/conflicts';
+    else api('POST', '/api/sync').catch(() => {});
+  });
+  paintSyncChip(chip);
+  return chip;
+}
+
+function paintSyncChip(chip) {
+  const s = syncStatus;
+  const [kind, label] = s.conflicts ? ['conflict', `⚠ ${s.conflicts} 張卡衝突`]
+    : s.syncing ? ['busy', '同步中…']
+    : s.error ? ['busy', '同步失敗，點一下重試']
+    : s.pending ? ['busy', `${s.pending} 筆待同步`]
+    : ['', '✓ 已同步'];
+  chip.className = `sync-chip ${kind}`.trim();
+  chip.title = s.error ?? (s.conflicts ? '點一下處理衝突' : '點一下立刻同步');
+  chip.textContent = label;
+}
+
+addEventListener('noesis-sync', (e) => {
+  syncStatus = e.detail;
+  for (const chip of document.querySelectorAll('.sync-chip')) paintSyncChip(chip);
+});
 
 // index.html picks the starting theme; a choice made here is remembered on this device.
 function themeToggle() {
@@ -748,7 +780,7 @@ function cardRow(deck, card, { href, handle = false, extra = null, insertable = 
       h('span', { class: 'id' }, card.id),
       extra,
       h('span', { class: 'row-text' }, questionPreview(card)),
-      h('span', { class: 'row-status' },
+      deck.conflicts?.includes(card.id) ? h('span', { class: 'row-status conflict-mark' }, '⚠ 衝突') : h('span', { class: 'row-status' },
         card.schedule === 'fsrs' ? null
           : scheduleText ? h('span', { class: 'schedule-mark' }, `${scheduleLabel(card.schedule)} · `)
           : h('span', { class: 'schedule-mark', title: scheduleLabel(card.schedule) }, '◇ '),
@@ -1504,6 +1536,7 @@ async function render() {
     return;
   }
   session = null;
+  if (location.hash === '#/conflicts') return renderConflicts();
   const p = location.hash.match(/^#\/([gs])\/([^/]+)\/practice\/(todo\/)?(seq|random)(?:\/([^/]+))?$/);
   if (p) {
     session = startSession(deck, p[1], decodeURIComponent(p[2]), { todo: !!p[3], random: p[4] === 'random' }, p[5] && decodeURIComponent(p[5]));
@@ -1545,8 +1578,8 @@ async function onDeckChange() {
     return;
   }
   if (!session) {
-    // An outside change must not wipe a card being edited on the group page.
-    if (document.querySelector('.edit')) return;
+    // An outside change must not wipe a card being edited on the group page, or a conflict being merged.
+    if (document.querySelector('.edit') || location.hash === '#/conflicts') return;
     return renderBrowse(deck);
   }
   updateSession(session, deck);
@@ -1563,6 +1596,57 @@ function updateSession(s, deck) {
 function groupName(s, id) {
   const slug = (s.cards.get(id) ?? s.deck.cards.find((c) => c.id === id))?.group;
   return s.deck.groups.find((g) => g.slug === slug)?.name ?? s.group.name;
+}
+
+// One conflict at a time: the phone's side can be edited before it is taken, the desktop's is shown with the lines the phone lacks marked.
+async function renderConflicts() {
+  showNav(null);
+  let conflicts;
+  try {
+    ({ conflicts } = await api('GET', '/api/conflicts'));
+  } catch (err) {
+    app.replaceChildren(breadcrumb(['同步衝突']), h('p', { class: 'errors' }, err.message));
+    return;
+  }
+  if (!conflicts.length) {
+    location.hash = '#/';
+    return;
+  }
+  const c = conflicts[0];
+  const grow = (e) => {
+    e.target.style.height = 'auto';
+    e.target.style.height = `${e.target.scrollHeight}px`;
+  };
+  const phone = c.phone === null ? null : h('textarea', { class: 'conflict-edit', spellcheck: 'false', 'aria-label': '手機這邊', oninput: grow, onkeydown: insertSpacesOnTab });
+  const ours = new Set((c.phone ?? '').split('\n'));
+  const desktop = c.missingGroup ? `群組「${c.groupName}」已不存在`
+    : c.desktop === null ? '已刪除'
+    : h('pre', {}, c.desktop.split('\n').map((line) => (c.phone !== null && line && !ours.has(line) ? h('span', { class: 'conflict-changed' }, line) : `${line}\n`)));
+  const message = h('p', { class: 'errors' });
+  const choose = (use) => api('POST', `/api/conflicts/${encodeURIComponent(c.id)}`, { use, raw: phone?.value }).then(render, (err) => {
+    message.textContent = err.message;
+  });
+  app.replaceChildren(...[
+    breadcrumb(['同步衝突']),
+    h('h1', {}, '同步衝突 ', h('span', { class: 'count' }, `${conflicts.length} 張`)),
+    h('p', { class: 'conflict-meta' }, `${c.groupName} · `, h('span', { class: 'id' }, c.id)),
+    conflictSide('手機這邊', phone ?? '已刪除'),
+    conflictSide('電腦這邊', desktop),
+    c.missingGroup ? h('p', { class: 'muted conflict-hint' }, '群組已不存在，手機無法建立群組。可以先複製上面的內容，之後到其他群組重新新增。') : null,
+    message,
+    h('div', { class: 'conflict-actions' },
+      h('button', { type: 'button', class: 'primary', disabled: c.missingGroup, onclick: () => choose('phone') }, '用手機這邊'),
+      h('button', { type: 'button', onclick: () => choose('desktop') }, '用電腦這邊')),
+  ].filter(Boolean));
+  scrollTo(0, 0);
+  if (phone) {
+    phone.value = c.phone;
+    grow({ target: phone });
+  }
+}
+
+function conflictSide(title, body) {
+  return h('section', { class: 'conflict-side' }, h('h3', {}, title), typeof body === 'string' ? h('p', { class: 'conflict-gone' }, body) : body);
 }
 
 addEventListener('hashchange', render);

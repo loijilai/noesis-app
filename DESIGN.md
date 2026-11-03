@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: noesis (based on Mobbin)
-description: A gallery-white, monochrome interface system adapted from Mobbin's design language for a retrieval-practice tool. Near-black ink on white canvas, a ladder of barely-there neutral tints instead of shadows, stadium-pill controls, 24px card geometry, and the system font stack. No accent color; the only chroma on screen is code syntax highlighting, the code-diff marks, the answer-check verdict (green for a match, amber for a difference), and the practice graph's green squares.
+description: A gallery-white, monochrome interface system adapted from Mobbin's design language for a retrieval-practice tool. Near-black ink on white canvas, a ladder of barely-there neutral tints instead of shadows, stadium-pill controls, 24px card geometry, and the system font stack. No accent color; the only chroma on screen is code syntax highlighting, the code-diff marks, the answer-check verdict (green for a match, amber for a difference), the amber sync-conflict marks, and the practice graph's green squares.
 
 colors:
   primary: "#141414"
@@ -164,7 +164,7 @@ The geometry does the work that color refuses to do. Every interactive element i
 - Stadium-pill interaction language: buttons, toggles, and badges all at `{rounded.full}`
 - Shadow-free elevation — hierarchy built from a neutral tint ladder (`{colors.canvas-soft}`, `{colors.field}`, `{colors.hairline}`) and 1px hairlines
 - Weight contrast for hierarchy: 650 headings, 450 body, 300 light subtitles
-- The only chroma on screen is code syntax highlighting (highlight.js github theme), the code-diff marks (red for extra, green for missing), the answer-check verdict banner (green 完全一致, amber 有差異), and the practice graph (GitHub's contribution greens) — all are information, not decoration
+- The only chroma on screen is code syntax highlighting (highlight.js github theme), the code-diff marks (red for extra, green for missing), the answer-check verdict banner (green 完全一致, amber 有差異), the phone's sync-conflict marks (the same amber), and the practice graph (GitHub's contribution greens) — all are information, not decoration
 
 ## Colors
 
@@ -310,7 +310,7 @@ The system is shadow-free: elevation is communicated by fill difference and hair
 
 ### Don't
 - Don't add drop shadows to cards or buttons — elevation is fills and hairlines only.
-- Don't introduce accent hues, gradients, or colored section bands. Code syntax highlighting, the code diff, the answer-check verdict and the practice graph are the only color.
+- Don't introduce accent hues, gradients, or colored section bands. Code syntax highlighting, the code diff, the answer-check verdict, the sync-conflict marks and the practice graph are the only color.
 - Don't load web fonts.
 - Don't apply letter-spacing or all-caps styling.
 - Don't put borders on form fields at rest — inputs are `{colors.field}` tint fills; the border appears only as the 2px ink focus ring.

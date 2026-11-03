@@ -7,12 +7,6 @@ export class GitHubError extends Error {
   }
 }
 
-export function textToBase64(text) {
-  let binary = '';
-  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 export function base64ToBytes(base64) {
   const binary = atob(base64.replace(/\s/g, ''));
   return Uint8Array.from(binary, (c) => c.charCodeAt(0));
@@ -49,9 +43,6 @@ export function gitHub({ token, repo, fetch = globalThis.fetch.bind(globalThis) 
     },
     // A blob's sha is its content, so a cached copy never goes stale.
     blob: async (sha) => base64ToBytes((await call('GET', `/git/blobs/${sha}`, undefined, 'force-cache')).content),
-    // Without `sha` the file must not exist yet; with it, GitHub refuses (409) if the file has changed since.
-    putFile: (file, text, { sha, branch, message }) =>
-      call('PUT', `/contents/${encodePath(file)}`, { message, branch, content: textToBase64(text), ...(sha ? { sha } : {}) }),
     // One commit for several files. The branch moves only if nobody pushed since `parent` (422 otherwise).
     async commit({ branch, parent, baseTree, changes, message }) {
       const tree = await call('POST', '/git/trees', {
