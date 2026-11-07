@@ -11,8 +11,6 @@ import { createStore } from './store.js';
 const SETTINGS_KEY = 'noesis-github';
 const PENDING_KEY = 'noesis-pending';
 const CHANGES_KEY = 'noesis-changes';
-// Everything goes out together once the user pauses, so a round of practice and its edits is one commit.
-const FLUSH_AFTER_MS = 90e3;
 const RECHECK_AFTER_MS = 30e3;
 const MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
 
@@ -48,7 +46,6 @@ export function forgetSettings() {
 
 let store;
 let gh;
-let flushTimer;
 let syncing = false;
 let syncError = null;
 let lastCheck = 0;
@@ -64,8 +61,8 @@ export async function start(settings, onProgress) {
   flush();
 }
 
+// Everything waits on the phone until the user leaves the page or the app, so a round of practice and its edits is one commit.
 async function flush() {
-  clearTimeout(flushTimer);
   if (!store.hasPending()) return;
   const before = [store.commit(), store.status().conflicts];
   syncing = true;
@@ -80,11 +77,6 @@ async function flush() {
   syncing = false;
   announce();
   if (store.commit() !== before[0] || store.status().conflicts !== before[1]) changed();
-}
-
-function flushLater() {
-  clearTimeout(flushTimer);
-  flushTimer = setTimeout(flush, FLUSH_AFTER_MS);
 }
 
 function syncStatus() {
@@ -112,7 +104,6 @@ async function recheck(after = RECHECK_AFTER_MS) {
 }
 
 function cardChanged() {
-  flushLater();
   announce();
 }
 
@@ -144,7 +135,6 @@ async function handle(path, method, body) {
     if (!event) return json(400, { error: 'id、type 或 rating 不合法' });
     if (!store.deck().cards.some((c) => c.id === event.id)) return json(404, { error: `找不到卡片 ${event.id}` });
     store.record(event);
-    flushLater();
     announce();
     return json(201, event);
   }
@@ -225,6 +215,13 @@ async function showAsset(img) {
   img.src = await imageUrls.get(sha);
 }
 
+const isPractice = (url) => new URL(url).hash.includes('/practice');
+
+// Moving between cards and rounds stays within practice; any other move leaves the page, so what was done there goes out.
+export function leavesPage(oldURL, newURL) {
+  return !(isPractice(oldURL) && isPractice(newURL));
+}
+
 function install() {
   const realFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => {
@@ -243,8 +240,8 @@ function install() {
 
   document.addEventListener('visibilitychange', () => (document.visibilityState === 'hidden' ? flush() : recheck()));
   addEventListener('pagehide', flush);
-  addEventListener('hashchange', () => {
-    if (!location.hash.includes('/practice')) flush();
+  addEventListener('hashchange', (e) => {
+    if (leavesPage(e.oldURL, e.newURL)) flush();
   });
 
   new MutationObserver((records) => {
