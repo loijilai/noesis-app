@@ -711,19 +711,18 @@ function practiceButtons(href, buttons) {
     toggle.setAttribute('aria-pressed', String(random));
     for (const { link, scope } of links) link.href = `${href}/practice/${scope}${random ? 'random' : 'seq'}`;
   };
-  const toggle = h('button', {
-    type: 'button',
-    class: 'shuffle',
-    title: '隨機順序',
-    'aria-label': '隨機順序',
-    onclick: () => {
-      setShuffle(!shuffleOn());
-      paint();
-    },
+  const toggle = shuffleButton(() => {
+    setShuffle(!shuffleOn());
+    paint();
   });
-  toggle.innerHTML = SHUFFLE_ICON;
   paint();
   return [...links.map((l) => l.link), toggle];
+}
+
+function shuffleButton(onclick) {
+  const button = h('button', { type: 'button', class: 'shuffle', title: '隨機順序', 'aria-label': '隨機順序', onclick });
+  button.innerHTML = SHUFFLE_ICON;
+  return button;
 }
 
 function shuffleOn() {
@@ -1120,9 +1119,32 @@ function startSession(deck, kind, key, { todo, random }, from) {
 
 // A start card left out of the round (archived or malformed) opens the round at the next card after it.
 function startIndex(deck, source, ids, from) {
-  const all = source.kind === 'g' ? deck.groups.find((g) => g.slug === source.key).order : source.order;
-  const rank = new Map(all.map((id, i) => [id, i]));
+  const rank = orderRank(deck, source);
   return Math.max(ids.findIndex((id) => rank.get(id) >= rank.get(from)), 0);
+}
+
+function orderRank(deck, source) {
+  const all = source.kind === 'g' ? deck.groups.find((g) => g.slug === source.key).order : source.order;
+  return new Map(all.map((id, i) => [id, i]));
+}
+
+// Switching keeps the round's cards and the card on screen; ratings and answers so far follow their cards.
+function setRoundOrder(s, random) {
+  const id = s.ids[s.pos];
+  const entries = new Map(s.ids.map((cid, i) => [cid, s.entries[i]]));
+  if (random) {
+    s.ids = [id, ...shuffle(s.ids.filter((cid) => cid !== id))];
+  } else {
+    const rank = orderRank(s.deck, s.group);
+    s.ids = [...s.ids].sort((a, b) => (rank.get(a) ?? Infinity) - (rank.get(b) ?? Infinity));
+  }
+  s.entries = s.ids.map((cid) => entries.get(cid));
+  s.pos = s.ids.indexOf(id);
+  const owned = ownsUrl(s);
+  s.random = random;
+  setShuffle(random);
+  if (owned) history.replaceState(history.state, '', `${roundUrl(s)}/${encodeURIComponent(id)}`);
+  showPractice();
 }
 
 function newRound(ids) {
@@ -1300,6 +1322,8 @@ function renderPracticeView() {
   const id = s.ids[s.pos];
   const prevButton = h('button', { type: 'button', class: 'small soft', title: '⌘/Ctrl + [', disabled: s.pos === 0, onclick: () => move(-1) }, '← 上一題');
   const nextButton = h('button', { type: 'button', class: 'small soft', title: '⌘/Ctrl + ]', onclick: () => move(1) }, '下一題 →');
+  const shuffleToggle = shuffleButton(() => setRoundOrder(s, !s.random));
+  shuffleToggle.setAttribute('aria-pressed', String(s.random));
   const meta = h('p', { class: 'meta' });
   const paintMeta = () => meta.replaceChildren(...[
     h('span', { class: 'id' }, id),
@@ -1435,6 +1459,7 @@ function renderPracticeView() {
       revealButton,
       h('span', { class: 'shortcut' }, '⌘/Ctrl + Enter'),
       h('span', { class: 'spacer' }),
+      shuffleToggle,
       prevButton,
       nextButton),
     error,
@@ -1452,9 +1477,17 @@ function showPractice() {
 // replaceState fires no hashchange and adds no history entry, so Back still leaves the practice page.
 // The URL is left alone once it points elsewhere, since the old round stays on screen until the new page loads.
 function keepInUrl(s, id) {
-  const round = `${s.group.href}/practice/${s.todo ? 'todo/' : ''}${s.random ? 'random' : 'seq'}`;
-  const hash = `${round}/${encodeURIComponent(id)}`;
-  if (location.hash !== hash && (location.hash === round || location.hash.startsWith(`${round}/`))) history.replaceState(history.state, '', hash);
+  const hash = `${roundUrl(s)}/${encodeURIComponent(id)}`;
+  if (location.hash !== hash && ownsUrl(s)) history.replaceState(history.state, '', hash);
+}
+
+function roundUrl(s) {
+  return `${s.group.href}/practice/${s.todo ? 'todo/' : ''}${s.random ? 'random' : 'seq'}`;
+}
+
+function ownsUrl(s) {
+  const round = roundUrl(s);
+  return location.hash === round || location.hash.startsWith(`${round}/`);
 }
 
 // The navigator lives outside #app and survives re-renders, so an open hover panel stays open across a jump.
