@@ -586,6 +586,20 @@ function groupRow(deck, group, count) {
     }
     render();
   };
+  const schedules = group.order.map((id) => [id, deck.schedule.get(id)]).filter(([, s]) => s);
+  const archived = schedules.filter(([, s]) => s.suspended).map(([id]) => id);
+  const unarchived = schedules.filter(([, s]) => !s.suspended).map(([id]) => id);
+  // One card at a time, so the events keep the group's order and a failure stops before the rest.
+  const markAll = async (ids, type, failure) => {
+    try {
+      for (const id of ids) await api('POST', '/api/progress', { id, type });
+    } catch (err) {
+      await render();
+      showRowError(group.slug, `${failure}：${err.message}`);
+      return;
+    }
+    render();
+  };
   const li = h('li', { class: 'row', 'data-id': group.slug },
     deck.readOnly ? null : dragHandle(),
     h('a', {
@@ -605,6 +619,15 @@ function groupRow(deck, group, count) {
           li.className = 'row editing';
           li.replaceChildren(groupForm({ name: group.name }, '改名', ({ name }) => api('PUT', url, { name }), render));
         },
+      },
+      unarchived.length > 0 && {
+        label: '封存全部',
+        confirm: `確定封存 ${unarchived.length} 張？`,
+        onselect: () => markAll(unarchived, 'suspend', '封存失敗'),
+      },
+      archived.length > 0 && {
+        label: '取消封存全部',
+        onselect: () => markAll(archived, 'unsuspend', '取消封存失敗'),
       },
       count
         ? { label: '刪除', disabled: true, note: `群組裡還有 ${count} 張卡，要先搬走或刪掉` }
