@@ -241,6 +241,9 @@ mark.missing { background: var(--diff-missing-bg); box-shadow: inset 0 -2px var(
 button.edit-trigger { min-height: 32px; min-width: 32px; padding: 0 var(--space-xs); border-color: transparent; background: transparent; color: var(--ink); }
 button.edit-trigger:hover { background: var(--field); }
 .shortcut { color: var(--text-faint); font-size: 12px; line-height: 1.33; }
+@media (pointer: coarse) { .shortcut { display: none; } }
+/* On a narrow screen the three wrap as one, kept to the right. */
+.nav-buttons { display: inline-flex; gap: var(--space-xs); margin-left: auto; }
 .round-done h2 { margin: 0 0 var(--space-md); }
 .round-done .actions { margin-bottom: 0; }
 
@@ -380,6 +383,7 @@ button.search-clear[hidden] { display: none; }
 button.shuffle { min-width: 40px; padding: 0 var(--space-sm); border-color: transparent; background: transparent; color: var(--text-faint); }
 button.shuffle:hover { background: var(--canvas-soft); color: var(--ink); }
 button.shuffle[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+button.shuffle.small { min-width: 32px; padding: 0 var(--space-xs); }
 
 .menu-wrap { position: relative; display: inline-flex; }
 button.menu-trigger {

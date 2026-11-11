@@ -1324,6 +1324,7 @@ function renderPracticeView() {
   const nextButton = h('button', { type: 'button', class: 'small soft', title: '⌘/Ctrl + ]', onclick: () => move(1) }, '下一題 →');
   const shuffleToggle = shuffleButton(() => setRoundOrder(s, !s.random));
   shuffleToggle.setAttribute('aria-pressed', String(s.random));
+  shuffleToggle.classList.add('small');
   const meta = h('p', { class: 'meta' });
   const paintMeta = () => meta.replaceChildren(...[
     h('span', { class: 'id' }, id),
@@ -1459,9 +1460,7 @@ function renderPracticeView() {
       revealButton,
       h('span', { class: 'shortcut' }, '⌘/Ctrl + Enter'),
       h('span', { class: 'spacer' }),
-      shuffleToggle,
-      prevButton,
-      nextButton),
+      h('span', { class: 'nav-buttons' }, shuffleToggle, prevButton, nextButton)),
     error,
     result,
   ];
