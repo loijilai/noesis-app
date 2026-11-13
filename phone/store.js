@@ -207,22 +207,22 @@ export function createStore({ gh, branch, pending, changes, cached = (sha, load)
         id: c.id,
         group,
         groupName: names.get(group) ?? group,
-        phone: c.raw,
-        desktop: file ? state.texts.get(file) : null,
+        local: c.raw,
+        remote: file ? state.texts.get(file) : null,
         missingGroup: !file && !groupExists(state.texts, group),
       };
     });
   }
 
-  // Taking the phone's side rebases the change on what GitHub has now, so the next flush writes it over the desktop's.
+  // Taking the phone's side rebases the change on what GitHub has now, so the next flush writes it over GitHub's.
   function resolve(id, use, raw) {
     const change = changes.get().find((c) => c.id === id && c.conflict);
     if (!change) throw new StoreError(404, `卡片 ${id} 沒有衝突`);
-    if (use === 'desktop') {
+    if (use === 'remote') {
       changes.set(changes.get().filter((c) => c.id !== id));
       return;
     }
-    if (use !== 'phone') throw new StoreError(400, 'use 必須是 phone 或 desktop');
+    if (use !== 'local') throw new StoreError(400, 'use 必須是 local 或 remote');
     const file = cardPath(state.texts, id);
     const group = file ? file.match(CARD_FILE)[1] : change.group;
     if (!file && !groupExists(state.texts, group)) throw new StoreError(409, `群組 ${group} 已不存在，手機無法建立群組`);

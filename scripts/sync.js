@@ -1,39 +1,51 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { text } from 'node:stream/consumers';
 import { dataPaths, loadConfig } from '../server/config.js';
+import { defaultBranchOf, gitIn, isDataRepo, pendingFiles, syncRepo, upstreamOf } from '../server/git-sync.js';
+
+// `--hook` is for a Claude Code Stop hook: it only acts in a cloud session, whose copy is gone once the session ends.
+// There it pushes to the default branch, whatever branch the session works on, and a problem is handed back to the
+// agent (exit 2) so it tells the user instead of ending the turn.
+const hook = process.argv.includes('--hook');
+const FAILED = hook ? 2 : 1;
+
+if (hook) {
+  if (!process.env.CLAUDE_CODE_REMOTE) process.exit(0);
+  // Claude Code runs the hook again after the agent has answered a problem; it must not keep it from stopping.
+  const input = JSON.parse((await text(process.stdin).catch(() => '')) || '{}');
+  if (input.stop_hook_active) process.exit(0);
+}
 
 const config = loadConfig();
 // Lets a checkout that has no device of its own label its commits.
-const device = process.env.NOESIS_DEVICE || config.device;
-const { dataDir, deckDir } = dataPaths(config);
+const device = process.env.NOESIS_DEVICE || config.device || (hook ? 'cloud' : 'unknown device');
+const { dataDir } = dataPaths(config);
 
-// Everything in the data repo is committed, so running in the code repo by mistake must not get that far.
-if (!existsSync(deckDir)) {
-  console.error(`noesis: 找不到 ${deckDir}。在 noesis.config.json 設定 "dataDir"，指向卡片的 repo`);
-  process.exit(1);
+if (!isDataRepo(dataDir)) {
+  console.error(`noesis: ${dataDir} 不是有 decks/ 的 git repo。在 noesis.config.json 設定 "dataDir"，指向卡片的 repo`);
+  process.exit(FAILED);
+}
+
+const git = gitIn(dataDir);
+const target = hook ? await defaultBranchOf(git) : await upstreamOf(git);
+if (!target) {
+  console.error('noesis: 目前的分支沒有對應的遠端分支，無法同步');
+  process.exit(FAILED);
 }
 
 try {
-  git('add', '--all');
-  if (hasStaged()) git('commit', '--quiet', '-m', `sync: ${device ?? 'unknown device'}`);
-  git('pull', '--rebase', '--autostash');
-  git('push');
-  console.log('noesis: 同步完成');
-} catch {
-  console.error('noesis: 同步失敗，請看上面 git 的訊息。若是 rebase 衝突，解決後執行 git rebase --continue，再重跑 npm run sync');
-  process.exit(1);
-}
-
-function git(...args) {
-  execFileSync('git', args, { cwd: dataDir, stdio: 'inherit' });
-}
-
-function hasStaged() {
-  try {
-    execFileSync('git', ['diff', '--cached', '--quiet'], { cwd: dataDir });
-    return false;
-  } catch {
-    return true;
+  if (hook && !(await pendingFiles(git, target)).size) process.exit(0);
+  const { conflicts } = await syncRepo(git, target, { message: `sync: ${device}` });
+  if (conflicts.length) {
+    const files = conflicts.map((c) => `  ${c.path}`).join('\n');
+    console.error(hook
+      ? `noesis: 同步衝突，這些檔案在 GitHub 上也被改過：\n${files}\n改動已 commit 在這個 session 裡，但還沒推上去。請告訴使用者是哪些檔案衝突、各自改了什麼，由使用者決定；不要自己解衝突，也不要強制 push。`
+      : `noesis: 同步衝突，這些檔案兩邊都改過：\n${files}\n改動已 commit 在本機，還沒推上去。打開 app 點頁首的衝突處理，或手動解決後再跑一次。`);
+    process.exit(FAILED);
   }
+  if (!hook) console.log('noesis: 同步完成');
+} catch (err) {
+  console.error(`noesis: 同步失敗：${(err.stderr || err.message || String(err)).trim()}`);
+  if (hook) console.error('改動還在這個 session 裡，沒有推上去。請告訴使用者同步失敗，session 結束前要處理，否則改動會消失。');
+  process.exit(FAILED);
 }

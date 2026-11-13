@@ -10,7 +10,7 @@ const RATING_LABELS = new Map([...RATINGS, ...SEEN]);
 const SCHEDULES = ['fsrs', '7d', '30d', '90d', 'none'];
 const SMART_ROUND_SIZE = 20;
 let session = null;
-// Only the phone keeps changes to send later; without that the sync controls stay hidden.
+// Hidden unless this copy syncs on its own: the phone, or a desktop whose data repo has a remote.
 let syncStatus = null;
 
 async function fetchDeck() {
@@ -138,7 +138,7 @@ function syncChip() {
 
 function paintSyncChip(chip) {
   const s = syncStatus;
-  const [kind, label] = s.conflicts ? ['conflict', `⚠ ${s.conflicts} 張卡衝突`]
+  const [kind, label] = s.conflicts ? ['conflict', `⚠ ${s.conflicts} 個衝突`]
     : s.syncing ? ['busy', '同步中…']
     : s.error ? ['busy', '同步失敗，點一下重試']
     : s.pending ? ['busy', `${s.pending} 筆待同步`]
@@ -1653,7 +1653,7 @@ function groupName(s, id) {
   return s.deck.groups.find((g) => g.slug === slug)?.name ?? s.group.name;
 }
 
-// One conflict at a time: the phone's side can be edited before it is taken, the desktop's is shown with the lines the phone lacks marked.
+// One conflict at a time: this device's side can be edited before it is taken, GitHub's is shown with the lines this side lacks marked.
 async function renderConflicts() {
   showNav(null);
   let conflicts;
@@ -1672,31 +1672,31 @@ async function renderConflicts() {
     e.target.style.height = 'auto';
     e.target.style.height = `${e.target.scrollHeight}px`;
   };
-  const phone = c.phone === null ? null : h('textarea', { class: 'conflict-edit', spellcheck: 'false', 'aria-label': '手機這邊', oninput: grow, onkeydown: insertSpacesOnTab });
-  const ours = new Set((c.phone ?? '').split('\n'));
-  const desktop = c.missingGroup ? `群組「${c.groupName}」已不存在`
-    : c.desktop === null ? '已刪除'
-    : h('pre', {}, c.desktop.split('\n').map((line) => (c.phone !== null && line && !ours.has(line) ? h('span', { class: 'conflict-changed' }, line) : `${line}\n`)));
+  const local = c.local === null ? null : h('textarea', { class: 'conflict-edit', spellcheck: 'false', 'aria-label': '這台裝置', oninput: grow, onkeydown: insertSpacesOnTab });
+  const ours = new Set((c.local ?? '').split('\n'));
+  const remote = c.missingGroup ? `群組「${c.groupName}」已不存在`
+    : c.remote === null ? '已刪除'
+    : h('pre', {}, c.remote.split('\n').map((line) => (c.local !== null && line && !ours.has(line) ? h('span', { class: 'conflict-changed' }, line) : `${line}\n`)));
   const message = h('p', { class: 'errors' });
-  const choose = (use) => api('POST', `/api/conflicts/${encodeURIComponent(c.id)}`, { use, raw: phone?.value }).then(render, (err) => {
+  const choose = (use) => api('POST', `/api/conflicts/${encodeURIComponent(c.id)}`, { use, raw: local?.value }).then(render, (err) => {
     message.textContent = err.message;
   });
   app.replaceChildren(...[
     breadcrumb(['同步衝突']),
-    h('h1', {}, '同步衝突 ', h('span', { class: 'count' }, `${conflicts.length} 張`)),
+    h('h1', {}, '同步衝突 ', h('span', { class: 'count' }, `${conflicts.length} 個`)),
     h('p', { class: 'conflict-meta' }, `${c.groupName} · `, h('span', { class: 'id' }, c.id)),
-    conflictSide('手機這邊', phone ?? '已刪除'),
-    conflictSide('電腦這邊', desktop),
+    conflictSide('這台裝置', local ?? '已刪除'),
+    conflictSide('GitHub 上', remote),
     c.missingGroup ? h('p', { class: 'muted conflict-hint' }, '群組已不存在，手機無法建立群組。可以先複製上面的內容，之後到其他群組重新新增。') : null,
     message,
     h('div', { class: 'conflict-actions' },
-      h('button', { type: 'button', class: 'primary', disabled: c.missingGroup, onclick: () => choose('phone') }, '用手機這邊'),
-      h('button', { type: 'button', onclick: () => choose('desktop') }, '用電腦這邊')),
+      h('button', { type: 'button', class: 'primary', disabled: c.missingGroup, onclick: () => choose('local') }, '用這台裝置的'),
+      h('button', { type: 'button', onclick: () => choose('remote') }, '用 GitHub 上的')),
   ].filter(Boolean));
   scrollTo(0, 0);
-  if (phone) {
-    phone.value = c.phone;
-    grow({ target: phone });
+  if (local) {
+    local.value = c.local;
+    grow({ target: local });
   }
 }
 
@@ -1705,5 +1705,7 @@ function conflictSide(title, body) {
 }
 
 addEventListener('hashchange', render);
-new EventSource('/api/events').addEventListener('message', onDeckChange);
+const events = new EventSource('/api/events');
+events.addEventListener('message', onDeckChange);
+events.addEventListener('sync', (e) => dispatchEvent(new CustomEvent('noesis-sync', { detail: JSON.parse(e.data) })));
 render();

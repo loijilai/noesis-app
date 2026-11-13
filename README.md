@@ -16,7 +16,7 @@ echo '{ "device": "home-mac", "dataDir": "../noesis" }' > noesis.config.json   #
 npm start                                                                    # http://127.0.0.1:4173
 ```
 
-沒設定 `device` 也能開，但評分不會被記錄。沒設定 `dataDir` 時，資料 repo 就是目前的資料夾。
+沒設定 `device` 也能開，但評分不會被記錄。沒設定 `dataDir` 時，資料 repo 就是目前的資料夾。不想自動同步時，在 `noesis.config.json` 加上 `"autoSync": false`。
 
 資料 repo 也可以把這個 repo 當成套件安裝（`"noesis-app": "github:loijilai/noesis-app"`），在資料 repo 裡就能直接用 `noesis-deck` 和 `noesis-sync`，不需要 clone 這個 repo。
 
@@ -48,11 +48,55 @@ npm start                                                                    # h
 
 ## 同步
 
+規則只有兩條，手機、電腦、agent 都一樣：
+
+1. 改了就自動同步上去，不管是誰改的、在哪裡改的。
+2. 同步遇到衝突就停下來，把兩邊給人看，由人決定。
+
+### 電腦
+
+app 開著時會自己同步資料 repo，不用跑任何指令：
+
+- 打開時先 pull，之後每 5 分鐘再 pull 一次。
+- `decks/` 或 `progress/` 有改動（在 app 裡改的，或 agent 直接改檔案）就開始計時，安靜 30 秒後一起 commit 成 `sync: <device>`、`pull --rebase`、push。關閉 app（Ctrl-C）前也會推一次。
+- 頁首的同步狀態跟手機版一樣：顯示待同步的檔案數，點一下立刻同步。
+- 同一個檔案兩邊都改過時，rebase 會退回，repo 不會停在 rebase 中間。頁首顯示衝突並暫停自動同步；點進去一個檔案一個檔案並排看「這台裝置」和「GitHub 上」兩邊，這台裝置這邊可以先編輯，再選要用哪一邊。全部選完才會推上去。
+
+只在資料 repo 有 `decks/`、而且目前分支有對應的遠端分支時才會開啟。
+
+手動同步也還在：
+
 ```bash
 npm run sync
 ```
 
-在資料 repo commit 所有變動，`git pull --rebase` 後 push。找不到 `decks/` 時不會執行，所以不會 commit 到這個 repo。
+做的事情一樣，衝突時一樣退回 rebase，列出衝突的檔案，到 app 裡處理。找不到 `decks/` 時不會執行，所以不會 commit 到這個 repo。
+
+### 雲端 agent session
+
+雲端的 Claude Code session 裡沒有 app 在跑，session 結束後 container 也會被回收，所以改動要在每輪回答完就推上去。在資料 repo 的 `.claude/settings.json` 掛上 Stop hook：
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"$CLAUDE_CODE_REMOTE\" ] || { cd \"$CLAUDE_PROJECT_DIR\" && { [ -d node_modules/noesis-app ] || npm install --silent >/dev/null 2>&1; } && npx --no-install noesis-sync --hook; }"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+- 只在雲端 session（有 `CLAUDE_CODE_REMOTE`）動作；本地 session 什麼都不做，交給 app。
+- 沒有改動的那幾輪（例如只是在聊觀念）不會產生任何 commit。
+- 推到資料 repo 的預設分支，不管 session 本身在哪個分支上，commit 訊息是 `sync: cloud`（可以用 `NOESIS_DEVICE` 改）。
+- 衝突或推不上去時，hook 把原因交回給 agent，由 agent 告訴你是哪些檔案、各自改了什麼；它不會自己解衝突，也不會強制 push。
 
 ## 手機版
 
@@ -64,7 +108,7 @@ npm run sync
 - 打開頁面時比對檔案列表的 `sha`，只下載有變的檔案，下載過的存在手機裡。圖片在顯示時才下載。
 - 評分和卡片的新增、修改、刪除都先存在手機，畫面立刻更新，之後在背景一起寫成一個 `sync: phone` commit：離開目前的頁面（在練習頁裡換卡片、換一輪不算）、切到背景、重新打開頁面時。評分 append 到 `progress/phone.jsonl`。寫不出去的會留著，下次再寫。
 - 頁首的同步狀態顯示待同步的筆數，點一下立刻同步。
-- 每張卡記著手機開始改它時 GitHub 上的版本。電腦在這段時間也改過或刪了同一張卡，這張卡就不送出，頁首顯示衝突；點進去並排看手機和電腦兩邊，手機這邊可以先編輯，再選要用哪一邊。其他沒衝突的改動照常送出。
+- 每張卡記著手機開始改它時 GitHub 上的版本。電腦在這段時間也改過或刪了同一張卡，這張卡就不送出，頁首顯示衝突；點進去並排看「這台裝置」和「GitHub 上」兩邊，這台裝置這邊可以先編輯，再選要用哪一邊。其他沒衝突的改動照常送出。
 - 可以在既有的 group 裡新增卡片（放在最後，或某張卡的前後）。新增和刪除時，`.md` 和 `_group.json` 在同一個 commit 裡改。
 - 手機上不能搬移、排序卡片，也不能新增或改 group。
 

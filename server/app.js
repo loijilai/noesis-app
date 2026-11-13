@@ -12,6 +12,7 @@ import { writeCardOrder } from './group-meta.js';
 import { writeGroupOrder, createGroup, renameGroup, deleteGroup } from './groups.js';
 import { smartGroups } from './smart-groups.js';
 import { cardSchedules } from './schedule.js';
+import { createAutoSync } from './auto-sync.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const MIME = {
@@ -28,13 +29,19 @@ const MIME = {
 
 const DEBOUNCE_MS = 100;
 
-export function startServer({ deckDir, progressDir, device, now = () => new Date(), port = 0, host = '127.0.0.1' }) {
+export async function startServer({ deckDir, progressDir, device, now = () => new Date(), port = 0, host = '127.0.0.1', autoSync = null }) {
   // Created up front so the first rating on a fresh setup is watched too.
   if (progressDir) mkdirSync(progressDir, { recursive: true });
-  const changes = watchDirs([deckDir, progressDir]);
+  let sync = null;
+  const changes = watchDirs([deckDir, progressDir], () => sync?.touched());
+  sync = autoSync && (await createAutoSync({ ...autoSync, device, onStatus: (status) => changes.send('sync', status) }));
   const server = http.createServer(async (req, res) => {
     try {
-      await route(req, res, { deckDir, progressDir, device, now, changes });
+      const { pathname } = new URL(req.url, 'http://localhost');
+      const ctx = { deckDir, progressDir, device, now, changes, sync };
+      // Syncing waits on this lock itself, so only the app's own writes take it.
+      if (sync && req.method !== 'GET' && !/^\/api\/(sync|conflicts)\b/.test(pathname)) await sync.exclusive(() => route(req, res, ctx));
+      else await route(req, res, ctx);
     } catch (err) {
       if (err instanceof ProgressError || err instanceof CardError) return sendJson(res, err.status, { error: err.message });
       console.error(err);
@@ -47,8 +54,10 @@ export function startServer({ deckDir, progressDir, device, now = () => new Date
       const { port: actual } = server.address();
       resolve({
         url: `http://${host}:${actual}`,
-        close: () => {
+        sync,
+        close: async () => {
           changes.close();
+          await sync?.close();
           return new Promise((done) => server.close(done));
         },
       });
@@ -57,13 +66,14 @@ export function startServer({ deckDir, progressDir, device, now = () => new Date
 }
 
 // macOS reports one save as several events; coalesce them into one notification.
-function watchDirs(dirs) {
+function watchDirs(dirs, onChange) {
   const clients = new Set();
   let timer = null;
   const notify = () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
       for (const res of clients) res.write('data: changed\n\n');
+      onChange();
     }, DEBOUNCE_MS);
   };
   const watchers = dirs.filter((dir) => dir && existsSync(dir)).map((dir) => watch(dir, { recursive: true }, notify));
@@ -79,6 +89,9 @@ function watchDirs(dirs) {
       clients.add(res);
       req.on('close', () => clients.delete(res));
     },
+    send(event, data) {
+      for (const res of clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    },
     close() {
       clearTimeout(timer);
       for (const watcher of watchers) watcher.close();
@@ -88,8 +101,9 @@ function watchDirs(dirs) {
   };
 }
 
-async function route(req, res, { deckDir, progressDir, device, now, changes }) {
+async function route(req, res, { deckDir, progressDir, device, now, changes, sync }) {
   const { pathname } = new URL(req.url, 'http://localhost');
+  if (pathname === '/api/sync' || pathname.startsWith('/api/conflicts')) return routeSync(req, res, pathname, deckDir, sync);
   if (pathname === '/api/progress' && req.method === 'POST') {
     const event = toEvent(await readJson(req), now());
     if (!(await cardIds(deckDir)).has(event.id)) return sendJson(res, 404, { error: `找不到卡片 ${event.id}` });
@@ -121,7 +135,10 @@ async function route(req, res, { deckDir, progressDir, device, now, changes }) {
     return res.end();
   }
   if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
-  if (pathname === '/api/deck') return sendJson(res, 200, await loadDeck(deckDir));
+  if (pathname === '/api/deck') {
+    const deck = await loadDeck(deckDir);
+    return sendJson(res, 200, sync ? { ...deck, canSync: true, conflicts: sync.conflictCardIds() } : deck);
+  }
   if (pathname === '/api/events') return changes.subscribe(req, res);
   if (pathname === '/api/smart-groups') {
     const { deck, events } = await loadDeckAndEvents(deckDir, progressDir);
@@ -140,6 +157,27 @@ async function route(req, res, { deckDir, progressDir, device, now, changes }) {
   if (pathname.startsWith('/api/')) return sendJson(res, 404, { error: 'not found' });
   if (pathname.startsWith('/assets/')) return serveFile(res, path.join(deckDir, 'assets') + path.sep, pathname.slice('/assets/'.length));
   return serveFile(res, PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname.slice(1));
+}
+
+async function routeSync(req, res, pathname, deckDir, sync) {
+  if (!sync) return sendJson(res, 404, { error: '沒有開啟自動同步' });
+  if (pathname === '/api/sync') {
+    if (req.method === 'POST') await sync.syncNow();
+    else if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
+    return sendJson(res, 200, sync.status());
+  }
+  if (pathname === '/api/conflicts') {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
+    const names = new Map((await loadDeck(deckDir)).groups.map((g) => [g.slug, g.name]));
+    return sendJson(res, 200, { conflicts: sync.conflicts(names) });
+  }
+  const conflict = pathname.match(/^\/api\/conflicts\/(.+)$/);
+  if (!conflict) return sendJson(res, 404, { error: 'not found' });
+  if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
+  const { use, raw } = await readJson(req);
+  await sync.resolve(decodeSegment(conflict[1]), use, raw);
+  res.writeHead(204);
+  return res.end();
 }
 
 async function routeCards(req, res, pathname, deckDir) {

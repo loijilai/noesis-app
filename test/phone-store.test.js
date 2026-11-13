@@ -244,7 +244,7 @@ test('an edit of a card the desktop also changed waits as a conflict, and the re
   assert.equal(remote.read('decks/g/bbbbb.md'), card('fine'));
   assert.deepEqual(store.status(), { pending: 0, conflicts: 1 });
   assert.equal(store.hasPending(), false);
-  assert.deepEqual(store.conflicts(), [{ id: 'aaaaa', group: 'g', groupName: 'G', phone: card('phone'), desktop: card('desktop'), missingGroup: false }]);
+  assert.deepEqual(store.conflicts(), [{ id: 'aaaaa', group: 'g', groupName: 'G', local: card('phone'), remote: card('desktop'), missingGroup: false }]);
   assert.equal(cardOf(store, 'aaaaa').raw, card('phone'));
 });
 
@@ -253,7 +253,7 @@ test('taking the phone\'s side, edited, writes it over the desktop\'s', async ()
   store.saveCard('g', 'aaaaa', card('phone'), cardOf(store, 'aaaaa').version);
   remote.push({ 'decks/g/aaaaa.md': card('desktop') });
   await store.flush();
-  store.resolve('aaaaa', 'phone', card('merged'));
+  store.resolve('aaaaa', 'local', card('merged'));
   assert.deepEqual(store.status(), { pending: 1, conflicts: 0 });
   await store.flush();
   assert.equal(remote.read('decks/g/aaaaa.md'), card('merged'));
@@ -265,10 +265,10 @@ test('taking the desktop\'s side drops the phone\'s change', async () => {
   store.saveCard('g', 'aaaaa', card('phone'), cardOf(store, 'aaaaa').version);
   remote.push({ 'decks/g/aaaaa.md': card('desktop') });
   await store.flush();
-  store.resolve('aaaaa', 'desktop');
+  store.resolve('aaaaa', 'remote');
   assert.equal(cardOf(store, 'aaaaa').raw, card('desktop'));
   assert.deepEqual(store.status(), { pending: 0, conflicts: 0 });
-  assert.throws(() => store.resolve('aaaaa', 'desktop'), { status: 404 });
+  assert.throws(() => store.resolve('aaaaa', 'remote'), { status: 404 });
 });
 
 test('a delete of a card the desktop changed is a conflict; taking the phone\'s side deletes it', async () => {
@@ -276,9 +276,9 @@ test('a delete of a card the desktop changed is a conflict; taking the phone\'s 
   store.deleteCard('g', 'aaaaa');
   remote.push({ 'decks/g/aaaaa.md': card('desktop') });
   await store.flush();
-  assert.equal(store.conflicts()[0].phone, null);
+  assert.equal(store.conflicts()[0].local, null);
   assert.equal(remote.read('decks/g/aaaaa.md'), card('desktop'));
-  store.resolve('aaaaa', 'phone');
+  store.resolve('aaaaa', 'local');
   await store.flush();
   assert.equal(remote.read('decks/g/aaaaa.md'), undefined);
   assert.deepEqual(order(remote), ['bbbbb']);
@@ -289,8 +289,8 @@ test('an edit of a card the desktop deleted is a conflict; taking the phone\'s s
   store.saveCard('g', 'aaaaa', card('phone'), cardOf(store, 'aaaaa').version);
   remote.push({ 'decks/g/aaaaa.md': null, 'decks/g/_group.json': '{\n  "name": "G",\n  "order": [\n    "bbbbb"\n  ]\n}\n' });
   await store.flush();
-  assert.equal(store.conflicts()[0].desktop, null);
-  store.resolve('aaaaa', 'phone');
+  assert.equal(store.conflicts()[0].remote, null);
+  store.resolve('aaaaa', 'local');
   await store.flush();
   assert.equal(remote.read('decks/g/aaaaa.md'), card('phone'));
   assert.deepEqual(order(remote), ['bbbbb', 'aaaaa']);
@@ -302,8 +302,8 @@ test('a card added to a group the desktop removed cannot take the phone\'s side'
   remote.push({ 'decks/g/aaaaa.md': null, 'decks/g/bbbbb.md': null, 'decks/g/_group.json': null });
   await store.flush();
   assert.equal(store.conflicts()[0].missingGroup, true);
-  assert.throws(() => store.resolve(id, 'phone'), { status: 409 });
-  store.resolve(id, 'desktop');
+  assert.throws(() => store.resolve(id, 'local'), { status: 409 });
+  store.resolve(id, 'remote');
   assert.deepEqual(store.status(), { pending: 0, conflicts: 0 });
 });
 
