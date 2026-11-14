@@ -121,6 +121,9 @@ img { max-width: 100%; border: 1px solid var(--hairline-soft); border-radius: va
 .breadcrumb a:hover { color: var(--ink); }
 .breadcrumb .sep { color: var(--text-faint); }
 .breadcrumb [aria-current] { color: var(--ink); font-weight: 600; }
+button.link-back { min-height: 32px; margin: -6px var(--space-xs) -6px 0; padding: 0 var(--space-sm); font-size: 13px; }
+.markdown .card-link { font-family: var(--font-mono); font-size: 0.9em; text-underline-offset: 2px; }
+.markdown .card-link.broken { color: var(--text-faint); text-decoration: line-through; cursor: help; }
 button.theme-toggle { min-height: 32px; min-width: 32px; margin: -6px 0 -6px auto; padding: 0 var(--space-xs); border-color: transparent; background: transparent; color: var(--text-muted); }
 button.theme-toggle:hover { background: var(--field); color: var(--ink); }
 button.sync-chip { min-height: 32px; margin: -6px 0 -6px auto; padding: 0 var(--space-sm); border-color: transparent; background: transparent; color: var(--text-faint); font-size: 13px; font-weight: 450; }
@@ -174,6 +177,8 @@ textarea.editor { min-height: 360px; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin: var(--space-md) 0; }
 .meta { display: flex; flex-wrap: wrap; gap: var(--space-md); color: var(--text-muted); font-size: 12px; line-height: 1.33; margin: 0 0 var(--space-md); }
 .meta .id { color: var(--ink-soft); margin: 0; }
+button.copy-id { min-height: 0; padding: 0; border: 0; background: transparent; font-weight: 450; cursor: copy; }
+button.copy-id:hover { background: transparent; color: var(--ink); text-decoration: underline; }
 .meta .badges { display: flex; flex-wrap: wrap; gap: var(--space-xxs); }
 .badge { padding: 2px var(--space-xs); border-radius: var(--rounded-full); background: var(--canvas-soft); color: var(--ink-soft); font-weight: 600; }
 /* Outlined to tell what the card is apart from the filled review-status badges. */
