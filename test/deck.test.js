@@ -447,21 +447,24 @@ describe('change notifications', () => {
   });
 
   test('a burst of writes is debounced into one notification', async () => {
-    await withServer({ 'g/aaaaa.md': codeCard() }, async ({ url, deckDir }) => {
-      const events = await openEvents(url);
-      try {
-        await settle();
-        const before = events.count();
-        const changed = events.next();
-        for (let i = 1; i <= 5; i++) {
-          await writeFile(path.join(deckDir, 'g/aaaaa.md'), codeCard(`2026-05-0${i}T00:00:00Z`));
-        }
-        await changed;
-        await settle(500);
-        assert.equal(events.count() - before, 1);
-      } finally {
-        events.close();
+    // A wide window so a slow CI runner's gaps between writes still fall inside it.
+    const deckDir = await makeDeck({ 'g/aaaaa.md': codeCard() });
+    const server = await startServer({ deckDir, debounceMs: 500 });
+    const events = await openEvents(server.url);
+    try {
+      await settle();
+      const before = events.count();
+      const changed = events.next();
+      for (let i = 1; i <= 5; i++) {
+        await writeFile(path.join(deckDir, 'g/aaaaa.md'), codeCard(`2026-05-0${i}T00:00:00Z`));
       }
-    });
+      await changed;
+      await settle(1000);
+      assert.equal(events.count() - before, 1);
+    } finally {
+      events.close();
+      await server.close();
+      await rm(deckDir, { recursive: true, force: true });
+    }
   });
 });

@@ -29,11 +29,11 @@ const MIME = {
 
 const DEBOUNCE_MS = 100;
 
-export async function startServer({ deckDir, progressDir, device, now = () => new Date(), port = 0, host = '127.0.0.1', autoSync = null }) {
+export async function startServer({ deckDir, progressDir, device, now = () => new Date(), port = 0, host = '127.0.0.1', autoSync = null, debounceMs = DEBOUNCE_MS }) {
   // Created up front so the first rating on a fresh setup is watched too.
   if (progressDir) mkdirSync(progressDir, { recursive: true });
   let sync = null;
-  const changes = watchDirs([deckDir, progressDir], () => sync?.touched());
+  const changes = watchDirs([deckDir, progressDir], debounceMs, () => sync?.touched());
   sync = autoSync && (await createAutoSync({ ...autoSync, device, onStatus: (status) => changes.send('sync', status) }));
   const server = http.createServer(async (req, res) => {
     try {
@@ -66,7 +66,7 @@ export async function startServer({ deckDir, progressDir, device, now = () => ne
 }
 
 // macOS reports one save as several events; coalesce them into one notification.
-function watchDirs(dirs, onChange) {
+function watchDirs(dirs, debounceMs, onChange) {
   const clients = new Set();
   let timer = null;
   const notify = () => {
@@ -74,7 +74,7 @@ function watchDirs(dirs, onChange) {
     timer = setTimeout(() => {
       for (const res of clients) res.write('data: changed\n\n');
       onChange();
-    }, DEBOUNCE_MS);
+    }, debounceMs);
   };
   const watchers = dirs.filter((dir) => dir && existsSync(dir)).map((dir) => watch(dir, { recursive: true }, notify));
   for (const watcher of watchers) watcher.on('error', (err) => console.error(err));
