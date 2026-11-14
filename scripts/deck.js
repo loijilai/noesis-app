@@ -4,6 +4,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { cardsLinkingTo, linkedIds } from '../public/card-links.js';
 import { parseCard } from '../server/card-text.js';
 import { CardError, createCard, deleteCard, setCardSchedule } from '../server/cards.js';
 import { loadDeck } from '../server/deck.js';
@@ -18,7 +19,7 @@ const HELP = `用法：npm run deck -- <指令> [參數]
 這裡的指令改的是結構：哪些卡片和 group、放在哪裡、什麼順序。順序檔由指令負責，不要手動改。
 卡片內容直接改 show 印出的那個檔案（不要動 frontmatter），改完跑 check。
 
-卡片都用 5 碼 id 指定，不用寫 group。新卡的內容從 stdin 傳入，只寫 ## 段落，不寫 frontmatter。
+卡片都用 5 碼 id 指定，不用寫 group。內文寫 [[id]] 就是連到那張卡片。新卡的內容從 stdin 傳入，只寫 ## 段落，不寫 frontmatter。
 格式不對的卡片不會寫入；失敗時印出原因、exit code 不是 0，什麼都沒改。
 
 卡片
@@ -26,7 +27,7 @@ const HELP = `用法：npm run deck -- <指令> [參數]
   check <file>...                        檢查格式，不寫入
   add <group> [--before <id> | --after <id>] < card.md
                                          新增卡片，印出 <group>/<id>；沒指定位置就排在最後
-  rm <id>...                             刪除卡片
+  rm <id>... [--force]                   刪除卡片；有其他卡片用 [[id]] 連到它時不刪，加 --force 仍要刪
   mv <id>... --to <group>                移到另一個 group 的最後面
   place <id> (--before <id> | --after <id>)
                                          在同一個 group 裡調整位置
@@ -62,7 +63,7 @@ let args;
 try {
   args = parseArgs({
     allowPositionals: true,
-    options: { before: { type: 'string' }, after: { type: 'string' }, to: { type: 'string' }, help: { type: 'boolean', short: 'h' } },
+    options: { before: { type: 'string' }, after: { type: 'string' }, to: { type: 'string' }, force: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } },
   });
 } catch (err) {
   usage(err.message);
@@ -92,7 +93,9 @@ async function run(command, rest) {
     return console.log(`${group}/${id}`);
   }
   if (command === 'rm') {
-    for (const card of await findAll(atLeastOne(rest))) {
+    const cards = await findAll(atLeastOne(rest));
+    if (!values.force) await refuseLinked(cards);
+    for (const card of cards) {
       await deleteCard(deckDir, card.group, card.id);
       console.log(`已刪除 ${card.group}/${card.id}`);
     }
@@ -149,12 +152,26 @@ async function runGroup(command, rest) {
   throw new UsageError(`沒有這個指令：group ${command ?? ''}`);
 }
 
+// Cards that are deleted together may link to each other.
+async function refuseLinked(cards) {
+  const leaving = new Set(cards.map((c) => c.id));
+  const staying = (await loadDeck(deckDir)).cards.filter((c) => !leaving.has(c.id));
+  const linked = cards.map((card) => [card, cardsLinkingTo(staying, card.id)]).filter(([, from]) => from.length);
+  if (!linked.length) return;
+  const lines = linked.map(([card, from]) => `${card.id} 被 ${from.map((c) => c.id).join('、')} 連到`);
+  throw new CardError(409, `${lines.join('\n')}\n什麼都沒刪；先改掉那些連結，或加 --force 仍要刪除`);
+}
+
 // Checks every file before failing, so one run lists all the problems. A draft without frontmatter gets one, as add does.
 async function check(files) {
   let failed = false;
+  let ids;
   for (const file of files) {
     const text = await readFile(file, 'utf8');
     const { errors } = parseCard(text.startsWith('---') ? text : `---\ncreated: ${new Date().toISOString()}\n---\n\n${text}`);
+    const links = linkedIds(text);
+    if (links.length) ids ??= new Set((await loadDeck(deckDir)).cards.map((c) => c.id));
+    for (const id of links) if (!ids.has(id)) errors.push(`連到不存在的卡片 ${id}`);
     if (errors.length) failed = true;
     console.log(`${file}: ${errors.length ? errors.join('；') : 'ok'}`);
   }

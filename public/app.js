@@ -1,5 +1,6 @@
 import { marked } from 'https://cdnjs.cloudflare.com/ajax/libs/marked/18.0.14/lib/marked.esm.min.js';
 import hljs from 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/es/highlight.min.js';
+import { CARD_LINK, cardsLinkingTo } from './card-links.js';
 import { diff } from './diff.js';
 import { leavesPage } from './sync-moments.js';
 
@@ -11,6 +12,9 @@ const RATING_LABELS = new Map([...RATINGS, ...SEEN]);
 const SCHEDULES = ['fsrs', '7d', '30d', '90d', 'none'];
 const SMART_ROUND_SIZE = 20;
 let session = null;
+// Which group each card is in, for drawing [[id]] links; filled in by every fetchDeck.
+let cardGroups = new Map();
+let followingLink = false;
 // Hidden unless this copy syncs on its own: the phone, or a desktop whose data repo has a remote.
 let syncStatus = null;
 
@@ -18,6 +22,7 @@ async function fetchDeck() {
   const [res, smartGroups, schedule, activity] = await Promise.all([fetch('/api/deck'), fetchSmartGroups(), fetchSchedule(), fetchActivity()]);
   if (!res.ok) throw new Error(`讀取題庫失敗（${res.status}）`);
   const deck = await res.json();
+  cardGroups = new Map(deck.cards.map((c) => [c.id, c.group]));
   if (deck.canSync) syncStatus = await api('GET', '/api/sync');
   if (deck.syncWithPage) syncWithPage();
   return { ...deck, smartGroups, schedule, activity };
@@ -118,9 +123,11 @@ function h(tag, attrs = {}, ...children) {
 }
 
 // Every crumb but the last is a link back up.
+// A page reached through a [[id]] link offers a way back, since a home-screen app on a phone has no Back button.
 function breadcrumb(...trail) {
   const crumbs = [['題庫', '#/'], ...trail];
-  return h('nav', { class: 'breadcrumb' }, crumbs.flatMap(([label, href], i) => {
+  const back = history.state?.fromLink ? h('button', { type: 'button', class: 'link-back', onclick: () => history.back() }, '← 返回') : null;
+  return h('nav', { class: 'breadcrumb' }, back, crumbs.flatMap(([label, href], i) => {
     const last = i === crumbs.length - 1;
     const crumb = last ? h('span', { 'aria-current': 'page' }, label) : h('a', { href }, label);
     return i ? [h('span', { class: 'sep' }, '/'), crumb] : [crumb];
@@ -406,7 +413,7 @@ function renderHome(deck) {
     }
     cardResults.replaceChildren(...matches.slice(0, CARD_RESULT_LIMIT).map(([card, match]) => {
       const li = cardRow(deck, card, {
-        href: `#/g/${encodeURIComponent(card.group)}/practice/seq/${encodeURIComponent(card.id)}`,
+        href: cardPage(card),
         extra: h('span', { class: 'row-group' }, names.get(card.group) ?? card.group),
         scheduleText: true,
       });
@@ -919,10 +926,15 @@ function cardMenu(deck, card, { edit, insert, report, done = render }) {
       : { label: '封存', confirm: '確定封存？', onselect: () => progress('suspend') }),
     (!deck.readOnly || deck.canDelete) && {
       label: '刪除',
-      confirm: '確定刪除這張卡？',
+      confirm: deleteQuestion(deck, card),
       onselect: () => run(() => api('DELETE', cardUrl(card)), '刪除失敗'),
     },
   ]);
+}
+
+function deleteQuestion(deck, card) {
+  const from = cardsLinkingTo(deck.cards, card.id);
+  return from.length ? `${from.map((c) => c.id).join('、')} 連到這張，確定刪除？` : '確定刪除這張卡？';
 }
 
 let openMenu = null;
@@ -1079,6 +1091,10 @@ function autoscroll(active) {
   requestAnimationFrame(step);
 }
 
+function cardPage(card) {
+  return `#/g/${encodeURIComponent(card.group)}/practice/seq/${encodeURIComponent(card.id)}`;
+}
+
 function cardUrl(card) {
   return `/api/cards/${encodeURIComponent(card.group)}/${encodeURIComponent(card.id)}`;
 }
@@ -1177,6 +1193,24 @@ function newRound(ids) {
 function newEntry() {
   return { input: '', revealed: false };
 }
+
+marked.use({
+  extensions: [{
+    name: 'cardLink',
+    level: 'inline',
+    start: (src) => src.indexOf('[['),
+    tokenizer(src) {
+      const m = src.match(new RegExp(`^${CARD_LINK.source}`));
+      if (m) return { type: 'cardLink', raw: m[0], id: m[1] };
+    },
+    renderer({ id }) {
+      const group = cardGroups.get(id);
+      return group
+        ? `<a class="card-link" href="${cardPage({ group, id })}">${id}</a>`
+        : `<span class="card-link broken" title="找不到這張卡片">${id}</span>`;
+    },
+  }],
+});
 
 function markdown(text) {
   const el = h('div', { class: 'markdown' });
@@ -1350,7 +1384,7 @@ function renderPracticeView() {
   shuffleToggle.classList.add('small');
   const meta = h('p', { class: 'meta' });
   const paintMeta = () => meta.replaceChildren(...[
-    h('span', { class: 'id' }, id),
+    copyIdButton(id),
     h('span', {}, `第 ${s.pos + 1} / ${s.ids.length} 題`),
     // The breadcrumb already names a group round's group; a smart round mixes groups.
     s.group.kind === 's' ? h('span', {}, groupName(s, id)) : null,
@@ -1487,6 +1521,31 @@ function renderPracticeView() {
     error,
     result,
   ];
+}
+
+function copyIdButton(id) {
+  const button = h('button', { type: 'button', class: 'id copy-id', title: `複製 [[${id}]]` }, id);
+  button.addEventListener('click', async () => {
+    button.textContent = (await copyText(`[[${id}]]`)) ? '已複製' : '無法複製';
+    setTimeout(() => { button.textContent = id; }, 1200);
+  });
+  return button;
+}
+
+// The phone version runs in a sandboxed frame that may block the clipboard API, so the older copy command is the fallback.
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = h('textarea', { readonly: true, style: 'position: fixed; opacity: 0' });
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    const copied = document.execCommand('copy');
+    area.remove();
+    return copied;
+  }
 }
 
 function showPractice() {
@@ -1727,6 +1786,17 @@ function conflictSide(title, body) {
   return h('section', { class: 'conflict-side' }, h('h3', {}, title), typeof body === 'string' ? h('p', { class: 'conflict-gone' }, body) : body);
 }
 
+addEventListener('click', (e) => {
+  const link = e.target.closest?.('a.card-link');
+  if (!link) return;
+  if (link.getAttribute('href') === location.hash) e.preventDefault();
+  else followingLink = true;
+});
+// Runs before render, so the page drawn for the link already knows it was reached through one.
+addEventListener('hashchange', () => {
+  if (followingLink) history.replaceState({ ...history.state, fromLink: true }, '');
+  followingLink = false;
+});
 addEventListener('hashchange', render);
 const events = new EventSource('/api/events');
 events.addEventListener('message', onDeckChange);

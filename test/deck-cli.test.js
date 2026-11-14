@@ -107,3 +107,23 @@ test('schedule sets the frontmatter of every card given, and a bad value or id c
     assert.equal(await read('aaaaa'), card('a'));
   });
 });
+
+test('rm refuses a card other cards link to unless --force, and check reports a link to a missing card', async () => {
+  const files = { 'g/aaaaa.md': card('see [[bbbbb]]'), 'g/bbbbb.md': card('b'), 'g/ccccc.md': card('c'), 'g/_group.json': { name: 'G', order: ['aaaaa', 'bbbbb', 'ccccc'] } };
+  await withDeck(files, async ({ deck, order }) => {
+    const refused = deck('rm', 'ccccc', 'bbbbb');
+    assert.equal(refused.code, 1);
+    assert.match(refused.err, /bbbbb.*aaaaa/);
+    assert.deepEqual(await order('g'), ['aaaaa', 'bbbbb', 'ccccc']);
+
+    assert.equal(deck('rm', 'aaaaa', 'bbbbb').code, 0);
+    assert.deepEqual(await order('g'), ['ccccc']);
+  });
+  await withDeck(files, async ({ deck, order }) => {
+    assert.equal(deck('rm', 'bbbbb', '--force').code, 0);
+    assert.deepEqual(await order('g'), ['aaaaa', 'ccccc']);
+    const checked = deck('check', deck('show', 'aaaaa').out.trim());
+    assert.equal(checked.code, 1);
+    assert.match(checked.out, /aaaaa\.md: 連到不存在的卡片 bbbbb/);
+  });
+});
