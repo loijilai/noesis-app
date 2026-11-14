@@ -74,7 +74,17 @@ npm run sync
 
 ### 雲端 agent session
 
-雲端的 Claude Code session 裡沒有 app 在跑，session 結束後 container 也會被回收，所以改動要在每輪回答完就推上去。在資料 repo 的 `.claude/settings.json` 掛上 Stop hook：
+雲端的 Claude Code session 裡沒有 app 在跑，session 結束後 container 也會被回收，所以改動要在 session 裡就推上去。
+
+```bash
+npm run sync -- --cloud
+```
+
+推到資料 repo 的預設分支，不管 session 本身在哪個分支上，commit 訊息是 `sync: cloud`（可以用 `NOESIS_DEVICE` 改）。沒有改動時什麼都不做。衝突時不會自己解，也不會強制 push：改動留在 session 裡，列出衝突的檔案。
+
+由 agent 來跑這個指令：在資料 repo 的 `AGENTS.md` 寫明改完 deck 要跑它、授權它推到預設分支。雲端環境內建的 Stop hook 會在 repo 有沒 commit 的改動時擋住 agent、叫它 commit 和 push，所以 agent 不會忘記；跑完 `--cloud` 後 repo 是乾淨的、也沒有沒推的 commit，內建的 hook 就會放行。
+
+這不靠資料 repo 自己的 `.claude/settings.json`：session 放了不只一個 repo 時，起始目錄是它們的上一層，Claude Code 讀不到資料 repo 裡的設定。只放資料 repo 的 session 讀得到，也可以在那裡掛上 Stop hook，每輪回答完自動跑同一件事：
 
 ```json
 {
@@ -93,10 +103,7 @@ npm run sync
 }
 ```
 
-- 只在雲端 session（有 `CLAUDE_CODE_REMOTE`）動作；本地 session 什麼都不做，交給 app。
-- 沒有改動的那幾輪（例如只是在聊觀念）不會產生任何 commit。
-- 推到資料 repo 的預設分支，不管 session 本身在哪個分支上，commit 訊息是 `sync: cloud`（可以用 `NOESIS_DEVICE` 改）。
-- 衝突或推不上去時，hook 把原因交回給 agent，由 agent 告訴你是哪些檔案、各自改了什麼；它不會自己解衝突，也不會強制 push。
+`--hook` 只在雲端 session（有 `CLAUDE_CODE_REMOTE`）動作，本地 session 什麼都不做，交給 app。衝突或推不上去時，它把原因交回給 agent，由 agent 告訴你。
 
 ## 手機版
 

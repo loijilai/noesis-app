@@ -215,3 +215,23 @@ test('in a cloud session a conflict is handed back to the agent once, and nothin
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('--cloud lets an agent push to the default branch from any branch, leaving nothing for the built-in hook to flag', async () => {
+  const { root, data, onRemote } = await setup();
+  try {
+    git(data, 'checkout', '--quiet', '-b', 'claude/work');
+    const run = () => spawnSync(process.execPath, [SYNC, '--cloud'], { cwd: data, encoding: 'utf8', env: { ...process.env, CLAUDE_CODE_REMOTE: '' } });
+    assert.match(run().stdout, /沒有要同步的改動/);
+
+    await writeFile(path.join(data, 'decks/g/bbbbb.md'), card('new'));
+    const r = run();
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /origin\/master/);
+    assert.equal(onRemote('decks/g/bbbbb.md'), card('new'));
+    assert.equal(git(data, 'log', '-1', '--format=%s').trim(), 'sync: cloud');
+    assert.equal(git(data, 'status', '--porcelain'), '');
+    assert.equal(git(data, 'rev-list', '--count', 'origin/HEAD..HEAD').trim(), '0');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
