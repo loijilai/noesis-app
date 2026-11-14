@@ -46,20 +46,22 @@ async function setup() {
   return { root, remote, data, other, onRemote: (file) => git(remote, 'show', `master:${file}`) };
 }
 
-test('pulls on start, and pushes what changed once things are quiet', async () => {
+test('pulls on start, and holds what changed, counted, until a sync is asked for', async () => {
   const { root, data, other, onRemote } = await setup();
   let sync;
   try {
     await other({ 'decks/g/aaaaa.md': card('from phone') });
     const statuses = [];
-    sync = await createAutoSync({ dataDir: data, device: 'mac', quietMs: 50, onStatus: (s) => statuses.push(s) });
+    sync = await createAutoSync({ dataDir: data, device: 'mac', onStatus: (s) => statuses.push(s) });
     await until(() => !sync.status().syncing);
     assert.equal(await readFile(path.join(data, 'decks/g/aaaaa.md'), 'utf8'), card('from phone'));
 
     await writeFile(path.join(data, 'decks/g/bbbbb.md'), card('new'));
     sync.touched();
     await until(() => sync.status().pending === 1);
-    await until(() => sync.status().pending === 0 && !sync.status().syncing);
+    await new Promise((r) => setTimeout(r, 200));
+    assert.throws(() => onRemote('decks/g/bbbbb.md'));
+    await sync.syncNow();
     assert.equal(onRemote('decks/g/bbbbb.md'), card('new'));
     assert.equal(git(data, 'log', '-1', '--format=%s').trim(), 'sync: mac');
     assert.deepEqual(sync.status(), { pending: 0, conflicts: 0, syncing: false, error: null });
@@ -74,7 +76,7 @@ test('a file changed on both sides waits as a conflict, with the repo left as it
   const { root, data, other, onRemote } = await setup();
   let sync;
   try {
-    sync = await createAutoSync({ dataDir: data, device: 'mac', quietMs: 10e3 });
+    sync = await createAutoSync({ dataDir: data, device: 'mac' });
     await until(() => !sync.status().syncing);
     await writeFile(path.join(data, 'decks/g/aaaaa.md'), card('mac'));
     await writeFile(path.join(data, 'decks/g/ccccc.md'), card('only on mac'));
@@ -106,7 +108,7 @@ test('taking GitHub\'s side keeps what is there, a delete included', async () =>
   const { root, data, other, onRemote } = await setup();
   let sync;
   try {
-    sync = await createAutoSync({ dataDir: data, device: 'mac', quietMs: 10e3 });
+    sync = await createAutoSync({ dataDir: data, device: 'mac' });
     await until(() => !sync.status().syncing);
     await writeFile(path.join(data, 'decks/g/aaaaa.md'), card('mac'));
     await other({ 'decks/g/aaaaa.md': card('phone') });
@@ -125,10 +127,11 @@ test('the server reports sync status and conflicts, and resolves them', async ()
   const { root, data, other, onRemote } = await setup();
   let server;
   try {
-    server = await startServer({ deckDir: path.join(data, 'decks'), progressDir: path.join(data, 'progress'), device: 'mac', autoSync: { dataDir: data, quietMs: 10e3 } });
+    server = await startServer({ deckDir: path.join(data, 'decks'), progressDir: path.join(data, 'progress'), device: 'mac', autoSync: { dataDir: data } });
     await until(() => !server.sync.status().syncing);
     const deck = await (await fetch(`${server.url}/api/deck`)).json();
     assert.equal(deck.canSync, true);
+    assert.equal(deck.syncWithPage, true);
     assert.deepEqual(deck.conflicts, []);
 
     const saved = await fetch(`${server.url}/api/cards/g/aaaaa`, { method: 'PUT', body: JSON.stringify({ raw: card('mac'), version: deck.cards[0].version }) });

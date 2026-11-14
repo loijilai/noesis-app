@@ -1,6 +1,7 @@
 import { marked } from 'https://cdnjs.cloudflare.com/ajax/libs/marked/18.0.14/lib/marked.esm.min.js';
 import hljs from 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/es/highlight.min.js';
 import { diff } from './diff.js';
+import { leavesPage } from './sync-moments.js';
 
 const app = document.getElementById('app');
 const KNOWN_SECTIONS = new Set(['Question', 'Code', 'Answer']);
@@ -18,6 +19,7 @@ async function fetchDeck() {
   if (!res.ok) throw new Error(`讀取題庫失敗（${res.status}）`);
   const deck = await res.json();
   if (deck.canSync) syncStatus = await api('GET', '/api/sync');
+  if (deck.syncWithPage) syncWithPage();
   return { ...deck, smartGroups, schedule, activity };
 }
 
@@ -146,6 +148,27 @@ function paintSyncChip(chip) {
   chip.className = `sync-chip ${kind}`.trim();
   chip.title = s.error ?? (s.conflicts ? '點一下處理衝突' : '點一下立刻同步');
   chip.textContent = label;
+}
+
+// The desktop goes out at the same moments as the phone: leaving a page, going to the background, closing the page;
+// coming back to the foreground looks for what changed elsewhere.
+const RECHECK_AFTER_MS = 30e3;
+let syncingWithPage = false;
+function syncWithPage() {
+  if (syncingWithPage) return;
+  syncingWithPage = true;
+  let last = Date.now();
+  const sync = () => {
+    last = Date.now();
+    fetch('/api/sync', { method: 'POST', keepalive: true }).catch(() => {});
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' || Date.now() - last >= RECHECK_AFTER_MS) sync();
+  });
+  addEventListener('pagehide', sync);
+  addEventListener('hashchange', (e) => {
+    if (leavesPage(e.oldURL, e.newURL)) sync();
+  });
 }
 
 addEventListener('noesis-sync', (e) => {

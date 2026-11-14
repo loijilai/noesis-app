@@ -137,7 +137,7 @@ async function route(req, res, { deckDir, progressDir, device, now, changes, syn
   if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
   if (pathname === '/api/deck') {
     const deck = await loadDeck(deckDir);
-    return sendJson(res, 200, sync ? { ...deck, canSync: true, conflicts: sync.conflictCardIds() } : deck);
+    return sendJson(res, 200, sync ? { ...deck, canSync: true, syncWithPage: true, conflicts: sync.conflictCardIds() } : deck);
   }
   if (pathname === '/api/events') return changes.subscribe(req, res);
   if (pathname === '/api/smart-groups') {
