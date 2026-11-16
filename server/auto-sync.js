@@ -75,6 +75,21 @@ export async function createAutoSync({ dataDir, device, onStatus = () => {} }) {
     status,
     exclusive,
     syncNow,
+    // Leaving a page sends out what changed here; with nothing to send, the remote is not asked.
+    // The check waits its turn behind the app's writes, so a rating still being saved counts.
+    async flush() {
+      let files;
+      try {
+        files = await exclusive(() => pendingFiles(git, target));
+      } catch {
+        return syncNow();
+      }
+      if (files.size !== pending) {
+        pending = files.size;
+        announce();
+      }
+      if (pending) return syncNow();
+    },
     // Something in the data repo changed: it waits, counted, for the next sync.
     touched() {
       count();

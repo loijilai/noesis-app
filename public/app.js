@@ -165,16 +165,16 @@ function syncWithPage() {
   if (syncingWithPage) return;
   syncingWithPage = true;
   let last = Date.now();
-  const sync = () => {
-    last = Date.now();
-    fetch('/api/sync', { method: 'POST', keepalive: true }).catch(() => {});
-  };
+  const leave = () => fetch('/api/sync?leaving', { method: 'POST', keepalive: true }).catch(() => {});
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' || Date.now() - last >= RECHECK_AFTER_MS) sync();
+    if (document.visibilityState === 'hidden') return leave();
+    if (Date.now() - last < RECHECK_AFTER_MS) return;
+    last = Date.now();
+    fetch('/api/sync', { method: 'POST' }).catch(() => {});
   });
-  addEventListener('pagehide', sync);
+  addEventListener('pagehide', leave);
   addEventListener('hashchange', (e) => {
-    if (leavesPage(e.oldURL, e.newURL)) sync();
+    if (leavesPage(e.oldURL, e.newURL)) leave();
   });
 }
 
@@ -926,7 +926,7 @@ function cardMenu(deck, card, { edit, insert, report, done = render }) {
       : { label: '封存', confirm: '確定封存？', onselect: () => progress('suspend') }),
     (!deck.readOnly || deck.canDelete) && {
       label: '刪除',
-      confirm: deleteQuestion(deck, card),
+      confirm: () => deleteQuestion(deck, card),
       onselect: () => run(() => api('DELETE', cardUrl(card)), '刪除失敗'),
     },
   ]);
@@ -942,6 +942,7 @@ let openMenu = null;
 // Items are { label, onselect } or { label, items } for a list that expands inside the menu.
 // A disabled item may carry a `note` saying why. An item with `confirm` asks again in place
 // on the first click: the phone version runs in a sandboxed frame where confirm() is blocked.
+// A `confirm` that is a function is asked only then, so rows stay cheap to build.
 // Menus open leftward from a trigger at the right edge; one that wrapped to the left of a narrow screen opens rightward instead.
 function showPanel(panel) {
   panel.hidden = false;
@@ -993,7 +994,7 @@ function menuItems(items) {
       onclick: () => {
         if (item.confirm && !button.classList.contains('confirming')) {
           button.classList.add('confirming');
-          button.textContent = item.confirm;
+          button.textContent = typeof item.confirm === 'function' ? item.confirm() : item.confirm;
           return;
         }
         closeMenu();

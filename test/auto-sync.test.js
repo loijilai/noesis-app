@@ -152,6 +152,28 @@ test('the server reports sync status and conflicts, and resolves them', async ()
   }
 });
 
+test('leaving a page with nothing changed does not reach the remote, and with a change sends it out', async () => {
+  const { root, data, other, onRemote } = await setup();
+  let server;
+  try {
+    server = await startServer({ deckDir: path.join(data, 'decks'), progressDir: path.join(data, 'progress'), device: 'mac', autoSync: { dataDir: data } });
+    await until(() => !server.sync.status().syncing);
+    await other({ 'decks/g/aaaaa.md': card('from phone') });
+    const leave = async () => (await fetch(`${server.url}/api/sync?leaving`, { method: 'POST' })).json();
+
+    assert.deepEqual(await leave(), { pending: 0, conflicts: 0, syncing: false, error: null });
+    assert.equal(await readFile(path.join(data, 'decks/g/aaaaa.md'), 'utf8'), card('base'));
+
+    await writeFile(path.join(data, 'decks/g/bbbbb.md'), card('new'));
+    assert.equal((await leave()).pending, 0);
+    assert.equal(onRemote('decks/g/bbbbb.md'), card('new'));
+    assert.equal(await readFile(path.join(data, 'decks/g/aaaaa.md'), 'utf8'), card('from phone'));
+  } finally {
+    await server?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('without auto-sync the server leaves the sync controls off', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'noesis-auto-'));
   let server;

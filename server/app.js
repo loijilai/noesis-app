@@ -162,7 +162,7 @@ async function route(req, res, { deckDir, progressDir, device, now, changes, syn
 async function routeSync(req, res, pathname, deckDir, sync) {
   if (!sync) return sendJson(res, 404, { error: '沒有開啟自動同步' });
   if (pathname === '/api/sync') {
-    if (req.method === 'POST') await sync.syncNow();
+    if (req.method === 'POST') await (new URL(req.url, 'http://localhost').searchParams.has('leaving') ? sync.flush() : sync.syncNow());
     else if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
     return sendJson(res, 200, sync.status());
   }
