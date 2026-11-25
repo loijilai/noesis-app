@@ -1,6 +1,7 @@
 import { marked } from 'https://cdnjs.cloudflare.com/ajax/libs/marked/18.0.14/lib/marked.esm.min.js';
 import hljs from 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/es/highlight.min.js';
 import { CARD_LINK, cardsLinkingTo } from './card-links.js';
+import { cardForChat } from './copy-card.js';
 import { diff } from './diff.js';
 import { leavesPage } from './sync-moments.js';
 
@@ -865,6 +866,8 @@ function showRowError(id, message) {
 // The row is draggable only while its handle is held, so pressing anywhere else is a click.
 const PEN = '<path d="M21.17 6.81a2.83 2.83 0 0 0-4-4L3.84 16.15a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/>';
 const FUNNEL = '<path d="M22 3H2l8 9.46V19l4 2v-8.54z"/>';
+const COPY = '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>';
+const CHECK = '<path d="M20 6 9 17l-5-5"/>';
 const MOON = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>';
 const SUN = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>';
 
@@ -1464,7 +1467,7 @@ function renderPracticeView() {
   const menuSlot = h('div', { class: 'practice-menu' });
   const paintMenu = () => {
     if (openMenu && menuSlot.contains(openMenu.wrap)) return;
-    menuSlot.replaceChildren(...[h('button', {
+    menuSlot.replaceChildren(...[copyCardButton(s.cards.get(id), () => entry.input, (message) => { error.textContent = message; }), h('button', {
       type: 'button',
       class: 'edit-trigger',
       title: '編輯',
@@ -1522,6 +1525,23 @@ function renderPracticeView() {
     error,
     result,
   ];
+}
+
+function copyCardButton(card, mine, report) {
+  const button = h('button', {
+    type: 'button',
+    class: 'edit-trigger',
+    title: '複製題目和答案',
+    'aria-label': '複製題目和答案',
+  }, icon(COPY));
+  button.addEventListener('click', async () => {
+    const copied = await copyText(cardForChat(card.raw, mine()));
+    report(copied ? '' : '無法複製，請到編輯裡手動選取');
+    if (!copied) return;
+    button.replaceChildren(icon(CHECK));
+    setTimeout(() => button.replaceChildren(icon(COPY)), 1200);
+  });
+  return button;
 }
 
 function copyIdButton(id) {
