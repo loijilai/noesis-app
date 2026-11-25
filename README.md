@@ -16,6 +16,8 @@ echo '{ "device": "home-mac", "dataDir": "../noesis" }' > noesis.config.json   #
 npm start                                                                    # http://127.0.0.1:4173
 ```
 
+`npm start` 會先 `git pull` 到最新的 `master`，`package.json` 或 `package-lock.json` 有變才跑 `npm install`。不在 `master`、有未 commit 的改動或連不上 GitHub 時，略過更新，直接用目前的版本啟動。
+
 沒設定 `device` 也能開，但評分不會被記錄。沒設定 `dataDir` 時，資料 repo 就是目前的資料夾。不想自動同步時，在 `noesis.config.json` 加上 `"autoSync": false`。
 
 資料 repo 也可以把這個 repo 當成套件安裝（`"noesis-app": "github:loijilai/noesis-app"`），在資料 repo 裡就能直接用 `noesis-deck` 和 `noesis-sync`，不需要 clone 這個 repo。

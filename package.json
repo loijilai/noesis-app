@@ -7,6 +7,7 @@
     "noesis-sync": "scripts/sync.js"
   },
   "scripts": {
+    "prestart": "node scripts/self-update.js",
     "start": "node server/main.js",
     "sync": "node scripts/sync.js",
     "test": "node --test",
