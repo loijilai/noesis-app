@@ -1,7 +1,9 @@
 import { fsrs, createEmptyCard, Rating } from 'ts-fsrs';
 import { intervalDays } from './card-text.js';
 
-const scheduler = fsrs({ enable_short_term: false });
+// Every device must schedule with the same target, so it is fixed here rather than set per device.
+export const FSRS_OPTIONS = { enable_short_term: false, request_retention: 0.85 };
+const scheduler = fsrs(FSRS_OPTIONS);
 const GRADES = new Map([['again', Rating.Again], ['hard', Rating.Hard], ['good', Rating.Good], ['easy', Rating.Easy]]);
 export const DAY_START_HOUR = 4;
 const DAY_MS = 24 * 60 * 60 * 1000;

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fsrs, createEmptyCard, Rating } from 'ts-fsrs';
 import { startServer } from '../server/app.js';
+import { FSRS_OPTIONS } from '../server/schedule.js';
 
 const CARD = '---\ncreated: 2026-01-01T00:00:00Z\n---\n\n## Question\n\nQ\n\n## Answer\n\nA\n';
 const withSchedule = (schedule) => CARD.replace('---\n\n', `schedule: ${schedule}\n---\n\n`);
@@ -19,7 +20,7 @@ const GRADES = { again: Rating.Again, hard: Rating.Hard, good: Rating.Good, easy
 
 // What ts-fsrs itself says for a sequence of reviews, so tests never pin FSRS numbers.
 function expectedCard(reviews) {
-  const scheduler = fsrs({ enable_short_term: false });
+  const scheduler = fsrs(FSRS_OPTIONS);
   let card = null;
   for (const { time, rating } of reviews) {
     const at = new Date(time);

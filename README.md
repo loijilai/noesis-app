@@ -24,7 +24,7 @@ npm start                                                                    # h
 
 - `decks/<group>/<id>.md`：一張卡片，`id` 為 5 碼小寫英數。內容由 `## Question`、`## Code` 或 `## Answer`（二擇一）、選填的 `## Notes` 組成；`## Answer` 可以留白。
   - frontmatter 的 `schedule` 決定排程，可以在卡片選單或 `npm run deck -- schedule` 改：
-    - `fsrs`（預設，不寫就是這個）：用 FSRS 排程，練習時評 Again／Hard／Good／Easy。
+    - `fsrs`（預設，不寫就是這個）：用 FSRS 排程，目標記憶率 85%，練習時評 Again／Hard／Good／Easy。
     - `<N>d`（例如 `30d`）：最後一次練過之後 N 天到期，練習時只按「看過」。適合想定期回到眼前的想法。
     - `none`：不排程、永遠不會到期，練習時只按「看過」。適合面試演練、oblique strategy 這類自己挑來練的卡。
 - `decks/<group>/_group.json`：group 名稱與卡片順序；`decks/_groups.json`：group 順序。
