@@ -1467,7 +1467,7 @@ function renderPracticeView() {
   const menuSlot = h('div', { class: 'practice-menu' });
   const paintMenu = () => {
     if (openMenu && menuSlot.contains(openMenu.wrap)) return;
-    menuSlot.replaceChildren(...[copyCardButton(s.cards.get(id), () => entry.input, (message) => { error.textContent = message; }), h('button', {
+    menuSlot.replaceChildren(...[copyCardButton(s.cards.get(id), (message) => { error.textContent = message; }), h('button', {
       type: 'button',
       class: 'edit-trigger',
       title: '編輯',
@@ -1527,7 +1527,7 @@ function renderPracticeView() {
   ];
 }
 
-function copyCardButton(card, mine, report) {
+function copyCardButton(card, report) {
   const button = h('button', {
     type: 'button',
     class: 'edit-trigger',
@@ -1535,7 +1535,7 @@ function copyCardButton(card, mine, report) {
     'aria-label': '複製題目和答案',
   }, icon(COPY));
   button.addEventListener('click', async () => {
-    const copied = await copyText(cardForChat(card.raw, mine()));
+    const copied = await copyText(cardForChat(card.raw));
     report(copied ? '' : '無法複製，請到編輯裡手動選取');
     if (!copied) return;
     button.replaceChildren(icon(CHECK));
